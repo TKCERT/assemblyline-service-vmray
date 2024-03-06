@@ -1,37 +1,28 @@
 ARG branch=latest
-ARG base=cccs/assemblyline-v4-service-base
-FROM $base:$branch
+FROM cccs/assemblyline-v4-service-base:$branch
 
 ENV SERVICE_PATH vmray_service.VMRayService
 
-LABEL Name="vmray"
-LABEL Version=1.1
-LABEL Remarks="This is a dockerfile for vmray as an AssemblyLine service"
-
-ARG al_version=4.4.stable
-
 USER root
 
-RUN apt-get update && apt-get install -y git gcc build-essential curl unzip libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt update -y && \
+    apt install -y git gcc build-essential curl unzip libssl-dev && \
+    rm -rf /var/cache/apt && rm -rf /var/lib/apt
 
-# Copy site-packages (should probably turn this into a requirements.txt)
-COPY site-packages.tgz /
-WORKDIR /usr/local/lib/python3.9/
-RUN tar xf /site-packages.tgz
-
-# Python packages
-ARG PIP_INDEX_URL=https://pypi.python.org/simple
-COPY ./requirements.txt /
-RUN pip install --upgrade pip
-RUN pip install -r /requirements.txt --upgrade
-
+# Switch to assemblyline user
 USER assemblyline
 
-# Copy files over
+# Copy service code
 WORKDIR /opt/al_service
+COPY requirements.txt .
 COPY vmray_service.py .
 COPY service_manifest.yml .
 
+# Install python dependencies
+RUN pip install --no-cache-dir --user --requirement requirements.txt && rm -rf ~/.cache/pip
+
+# Patch version in manifest
+ARG version=4.5.0.dev1
 USER root
 RUN sed -i -e "s/\$SERVICE_TAG/$version/g" service_manifest.yml
 
