@@ -1,3 +1,4 @@
+import shutil
 import base64
 import time
 from collections import defaultdict
@@ -116,6 +117,12 @@ class VMRayService(ServiceBase):
                                           f"{vmray_submission_id})")
                             finished_jobs.append(analysis)
                             running_job_ids[job_type].remove(job_id)
+
+                            report_file_path = f"/tmp/vmray_report_job{job_id}.pdf"
+                            with open(report_file_path, "wb+") as report_file:
+                                report_stream = api.call("GET", f"/rest/analysis/job/{job_id}/archive/report/report.pdf", raw_data=True)
+                                shutil.copyfileobj(report_stream, report_file)
+                            request.add_supplementary(report_file_path, f"VMRay_Analysis_Report_job{job_id}.pdf", f"VMRay generated report for job: {job_id}")
                         else:
                             self.log.info(f"VMRay hasn't finished analysis for {job_rest_endpoint} ({job_id_key}: "
                                           f"{job_id}) for the submission '{vmray_submission_original_filename}' (vmray "
