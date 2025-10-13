@@ -10,6 +10,11 @@ from assemblyline_v4_service.common.base import ServiceBase
 from assemblyline_v4_service.common.result import Result, ResultJSONSection
 from vmray.rest_api import VMRayRESTAPI, VMRayRESTAPIError
 
+# TODO: Very important: make sure the verdict is extracted and mapped to AL tags and score
+# TODO: use VMRayAPIWrapper and other components from vmray package (IntegrationKit)
+# TODO: extract screenshots and render them as timeline in the result section
+# TODO: extract IOCS and add them to the result as tags
+# TODO: fix support for reputation jobs with regards to endless waiting for completion
 
 class VMRayService(ServiceBase):
 
