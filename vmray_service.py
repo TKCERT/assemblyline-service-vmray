@@ -161,6 +161,18 @@ class VMRayService(ServiceBase):
             self.log.debug(result)
 
             request.result = result
+
+            # <sample_id> = 90665
+            # GET /rest/sample/<sample_id>/report
+            # <job_id> = 218482
+            # GET /rest/analysis/job/<job_id>/archive/report/report.pdf
+            """
+            report_file_path = f"/tmp/vmray_report_sample{sample_id}.pdf"
+            with open(report_file_path, "wb+") as report_file:
+                report_stream = api.call("GET", f"/rest/sample/{sample_id}/report", raw_data=True)
+                shutil.copyfileobj(report_stream, report_file)
+            request.add_supplementary(report_file_path, f"VMRay_Report_sample{sample_id}.pdf", f"VMRay generated report for sample: {sample_id}")
+            """
         except Exception as ex:
             self.log.error(str(ex))
             raise
