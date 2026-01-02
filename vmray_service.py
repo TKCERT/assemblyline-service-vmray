@@ -1,40 +1,27 @@
+import json
 import shutil
-import base64
-import time
-from collections import defaultdict
-from datetime import datetime, timedelta
-from enum import Enum
-from typing import List, Tuple
+import tempfile
+from typing import Any, Dict, Optional
+from pathlib import Path
 
 from assemblyline_v4_service.common.base import ServiceBase
-from assemblyline_v4_service.common.result import Result, ResultJSONSection
-from vmray.rest_api import VMRayRESTAPI, VMRayRESTAPIError
+from assemblyline_v4_service.common.request import ServiceRequest
+from assemblyline_v4_service.common.result import Result, ResultImageSection
+from vmray.rest_api import VMRayRESTAPI
+from vmray.integration_kit import VMRaySubmissionKit
 
 # TODO: Very important: make sure the verdict is extracted and mapped to AL tags and score
-# TODO: use VMRayAPIWrapper and other components from vmray package (IntegrationKit)
-# TODO: extract screenshots and render them as timeline in the result section
-# TODO: extract IOCS and add them to the result as tags
-# TODO: fix support for reputation jobs with regards to endless waiting for completion
+# TODO: extract artifacts as well as IOCs and add them to the result as tags
 
 class VMRayService(ServiceBase):
-
-    class JobType(Enum):
-        JOBS = ("jobs", "job_id", "job")  # Dynamic or Web Analysis jobs
-        # MD_JOBS = ... Deprecated in VMRay
-        REPUTATION_JOBS = ("reputation_jobs", "reputation_job_id", "reputation_job")
-        STATIC_JOBS = ("static_jobs", "job_id", "job")    # Shares the same structure with dynamic jobs
-        VT_JOBS = ("vt_jobs", "vt_job_id", "vt_job")  # Virtus Total
-        # Unclear how this part of the rest API works. There don't seem to be any corresponding rest endpoints
-        # WHOIS_JOBS = (...)
-
     VMRAY_SERVICE_URL_CONFIG_KEY: str = "vmray_service_url"
     VMRAY_SERVICE_API_KEY_CONFIG_KEY: str = "vmray_service_api_key"
 
-    def __init__(self, config=None):
+    def __init__(self, config: Optional[Dict] = None) -> None:
         super(VMRayService, self).__init__(config)
 
-        self.vmray_service_url: str = config.get(self.VMRAY_SERVICE_URL_CONFIG_KEY)
-        self.vmray_api_key: str = config.get(self.VMRAY_SERVICE_API_KEY_CONFIG_KEY)
+        self.vmray_service_url = self.config.get(self.VMRAY_SERVICE_URL_CONFIG_KEY)
+        self.vmray_api_key = self.config.get(self.VMRAY_SERVICE_API_KEY_CONFIG_KEY)
         self.verify = self.config.get("verify_certificate", True)
 
         if not self.vmray_service_url:
@@ -46,155 +33,121 @@ class VMRayService(ServiceBase):
     def start(self):
         self.log.info(f"start() from {self.service_attributes.name} service called")
 
-    def execute(self, request):
-
-        # The -15s is to give a bit of a margin before the timeout to collect and return some sort of status
-        timeout_time = datetime.now() + timedelta(minutes=self.service_attributes.timeout) - timedelta(minutes=1)
-
+    def execute(self, request: ServiceRequest) -> None:
         self.log.info(f"execute() from {self.service_attributes.name} service called for '{request.file_name}'")
 
-        args = {"shareable": True,  # indicates whether the hash of the sample will be shared with VirusTotal.
-                "reanalyze": True   # indicates whether a duplicate submission will create analysis jobs
-                }
+        request.result = Result()
 
-        try:
-            with open(request.file_path, "rb") as sample_file_object:
-                args["sample_file"] = sample_file_object
-                args["sample_filename_b64enc"] = base64.b64encode(request.file_name.encode("utf-8")).decode("utf-8")
+        self.log.info(f"Submitting file to VMRay for analysis with timeout {self.service_attributes.timeout} seconds")
 
-                try:
-                    api = VMRayRESTAPI(self.vmray_service_url,
-                                       self.vmray_api_key,
-                                       verify_cert=self.verify)
+        submission_kit = VMRaySubmissionKit(self.vmray_service_url, self.vmray_api_key, self.verify)
+        submission_results = submission_kit.submit_file(Path(request.file_path), params={
+            "shareable": True,  # indicates whether the hash of the sample will be shared with VirusTotal
+            "reanalyze": True,  # indicates whether a duplicate submission will create analysis jobs
+            "user_config": json.dumps({"timeout": int(self.service_attributes.timeout / 2)}),
+        })
 
-                    vmray_data = self.submit_sample(api, args)
-                except Exception as ex:
-                    raise Exception(f"VMRay failed to process '{request.file_name}': {str(ex)}")
+        api = submission_kit._api
+        for submission_result in submission_results:
+            sample_id = submission_result._sample_id
 
-            errors = vmray_data.get("errors")
-            if errors:
-                errors = [error["error_msg"] for error in errors]
-                message = f"VMRay failed to process '{request.file_name}': " + errors[0] \
-                    if len(errors) == 1 \
-                    else "\n" + "\n".join(f" - {error}" for error in errors)
-                raise Exception(message)
+            self._download_pdf_report_as_supplementary(
+                request=request,
+                api=api,
+                report_endpoint=f"/rest/sample/{sample_id}/report",
+                supplementary_filename=f"VMRay_Summary_{sample_id}.pdf",
+                supplementary_description=f"Sample #{sample_id}",
+            )
 
-            vmray_submission_id: str = vmray_data["submissions"][0]["submission_id"]
-            vmray_submission_original_filename: str = vmray_data["submissions"][0]["submission_original_filename"]
+            analyses = submission_kit._api.get_analyses_by_submission_id(submission_result.submission_id)
+            for analysis in analyses:
+                analysis_id = analysis["analysis_id"]
+                if "analysis_vm_description" in analysis:
+                    analysis_name = f"{analysis['analysis_vm_description']} | {analysis['analysis_configuration_name']}"
+                elif "analysis_static_config_name" in analysis:
+                    analysis_name = f"{analysis['analysis_static_config_name']} static configuration"
+                else:
+                    analysis_name = f"Analysis #{analysis_id}"
 
-            running_job_ids = defaultdict(list)
+                if analysis["analysis_pdf_created"]:
+                    self._download_pdf_report_as_supplementary(
+                        request=request,
+                        api=api,
+                        report_endpoint=f"/rest/analysis/{analysis_id}/archive/report/report.pdf",
+                        supplementary_filename=f"VMRay_Analysis_{analysis_id}.pdf",
+                        supplementary_description=analysis_name,
+                    )
 
-            job_count: int = 0
+                if analysis["analysis_analyzer_name"] in ("vmray", "vmray_web"):
+                    image_section = ResultImageSection(request, analysis_name)
+                    for screenshot_name in self._iter_screenshot_filenames(api=api, analysis_id=analysis_id):
+                        self._download_screenshot_into_image_section(
+                            request=request,
+                            image_section=image_section,
+                            api=api,
+                            analysis_id=analysis_id,
+                            screenshot_name=screenshot_name,
+                        )
+                    request.result.add_section(image_section)
 
-            for _name, job_type in self.JobType.__members__.items():
-                job_category_key, job_id_key, _job_rest_endpoint = job_type.value
-                if job_category_key in vmray_data:
-                    for job in vmray_data[job_category_key]:
-                        running_job_ids[job_type].append(job[job_id_key])
-                        job_count += 1
+                print("analysis", json.dumps(analysis))
+                report = submission_kit._api.get_report(analysis_id)
+                print("report", json.dumps(json.load(report)))
 
-            self.log.info(f"VMRay created {job_count} job(s) for the submission '{vmray_submission_original_filename}' "
-                          f"(vmray id: {vmray_submission_id}):")
-            for job_type, job_ids in running_job_ids.items():
-                self.log.info(f"{job_type.value[1]}(s): {','.join([str(job_id) for job_id in job_ids])}")
+    def _download(
+        self,
+        api: VMRayRESTAPI,
+        file_endpoint: str,
+    ) -> Any:
+        return api.call("GET", file_endpoint, raw_data=True)
 
-            finished_jobs = []
+    def _download_pdf_report_as_supplementary(
+        self,
+        request: ServiceRequest,
+        api: VMRayRESTAPI,
+        report_endpoint: str,
+        supplementary_filename: str,
+        supplementary_description: str,
+    ):
+        with tempfile.NamedTemporaryFile(
+            mode="wb+",
+            suffix=".pdf",
+            prefix="vmray_report_",
+            dir=self.working_directory,
+            delete=False,
+        ) as output_file:
+            shutil.copyfileobj(self._download(api, report_endpoint), output_file)
+            return request.add_supplementary(output_file.name, supplementary_filename, supplementary_description)
 
-            while running_job_ids:
+    def _download_screenshot_into_image_section(
+        self,
+        request: ServiceRequest,
+        image_section: ResultImageSection,
+        api: VMRayRESTAPI,
+        analysis_id: int,
+        screenshot_name: str,
+    ):
+        screenshot_stream = self._download(
+            api,
+            file_endpoint=f"/rest/analysis/{analysis_id}/archive/screenshots/{screenshot_name}",
+        )
+        with tempfile.NamedTemporaryFile(
+            mode="wb+",
+            suffix=screenshot_name,
+            prefix="vmray_screenshot_",
+            dir=self.working_directory,
+            delete=False,
+        ) as output_file:
+            shutil.copyfileobj(screenshot_stream, output_file)
+            return image_section.add_image(output_file.name, screenshot_name, f"Screenshot for analysis {analysis_id}")
 
-                # create a copy of the jobs, so the original can be modified in the loop
-                current_jobs: List[Tuple[self.JobType, List[int]]] = list(running_job_ids.items())
-
-                unfinished_jobs = []
-
-                for job_tuple in current_jobs:
-
-                    job_type: self.JobType = job_tuple[0]
-                    job_ids: List[int] = job_tuple[1]
-                    _job_category_key, _job_id_key, job_rest_endpoint = job_type.value
-
-                    for job_id in job_ids:
-
-                        analysis = self.get_job_analysis(api, job_id)
-                        if analysis:
-                            self.log.info(f"VMRay finished analysis for {job_rest_endpoint} ({job_id_key}: {job_id}) "
-                                          f"for the submission '{vmray_submission_original_filename}' (vmray id: "
-                                          f"{vmray_submission_id})")
-                            finished_jobs.append(analysis)
-                            running_job_ids[job_type].remove(job_id)
-
-                            report_file_path = f"/tmp/vmray_report_job{job_id}.pdf"
-                            with open(report_file_path, "wb+") as report_file:
-                                report_stream = api.call("GET", f"/rest/analysis/job/{job_id}/archive/report/report.pdf", raw_data=True)
-                                shutil.copyfileobj(report_stream, report_file)
-                            request.add_supplementary(report_file_path, f"VMRay_Analysis_Report_job{job_id}.pdf", f"VMRay generated report for job: {job_id}")
-                        else:
-                            self.log.info(f"VMRay hasn't finished analysis for {job_rest_endpoint} ({job_id_key}: "
-                                          f"{job_id}) for the submission '{vmray_submission_original_filename}' (vmray "
-                                          f"id: {vmray_submission_id})")
-                            unfinished_jobs.append(self.get_job_status(api, job_id, job_rest_endpoint))
-
-                    if not running_job_ids[job_type]:  # no more jobs for this job type
-                        del running_job_ids[job_type]
-
-                if datetime.now() >= timeout_time:
-                    break
-
-                time.sleep(10)  # Wait before the next round of calls to prevent hammering the server
-
-            result = Result()
-
-            finished_json_section = ResultJSONSection('VMRay Response')
-            finished_json_section.set_json(finished_jobs)
-            result.add_section(finished_json_section)
-
-            if unfinished_jobs:
-                self.log.warn(f"VMRay wasn't able to complete the following {len(unfinished_jobs)} of"
-                              f" {len(finished_jobs) + len(unfinished_jobs)} before the "
-                              f"~{self.service_attributes.timeout} minute timeout: {unfinished_jobs}")
-                unfinished_json_section = ResultJSONSection(
-                    "VMRay jobs not completed before the AssemblyLine service timeout of "
-                    f" ~{self.service_attributes.timeout} minutes.")
-                unfinished_json_section.set_json(unfinished_jobs)
-                result.add_section(unfinished_json_section)
-
-            self.log.debug(result)
-
-            request.result = result
-
-            # <sample_id> = 90665
-            # GET /rest/sample/<sample_id>/report
-            # <job_id> = 218482
-            # GET /rest/analysis/job/<job_id>/archive/report/report.pdf
-            """
-            report_file_path = f"/tmp/vmray_report_sample{sample_id}.pdf"
-            with open(report_file_path, "wb+") as report_file:
-                report_stream = api.call("GET", f"/rest/sample/{sample_id}/report", raw_data=True)
-                shutil.copyfileobj(report_stream, report_file)
-            request.add_supplementary(report_file_path, f"VMRay_Report_sample{sample_id}.pdf", f"VMRay generated report for sample: {sample_id}")
-            """
-        except Exception as ex:
-            self.log.error(str(ex))
-            raise
-
-    def submit_sample(self, api, args):
-        ''' Submit the sample to VMRay'''
-        return api.call("POST", "/rest/sample/submit", args)
-
-    def get_job_analysis(self, api, job_id: int):
-        try:
-            return api.call("GET", f"/rest/analysis/job/{job_id}")
-        except VMRayRESTAPIError as error:
-            if error.args[0] == "No such element":
-                return None
-            else:
-                raise
-
-    def get_job_status(self, api, job_id: int, endpoint: str):
-        try:
-            return api.call("GET", f"/rest/{endpoint}/{job_id}")
-        except VMRayRESTAPIError as error:
-            if error.args[0] == "No such element":
-                return None
-            else:
-                raise
+    def _iter_screenshot_filenames(
+        self,
+        api: VMRayRESTAPI,
+        analysis_id: int,
+    ) -> Any:
+        for screenshot in self._download(
+            api,
+            file_endpoint=f"/rest/analysis/{analysis_id}/archive/screenshots/index.log",
+        ).readlines():
+            yield screenshot.decode().strip().split(" | ")[-1]
