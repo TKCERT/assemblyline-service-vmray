@@ -36,7 +36,10 @@ licence_count: 0
 config:
   vmray_service_url: ""
   vmray_service_api_key: ""
+  vmray_debug_add_json: false
+  vmray_debug_sample_id: 0
   verify_certificate: true
+
 # Submission params block:
 #     A list of submission param object that define parameters
 #     that the user can change about the service for each of its scans
@@ -96,6 +99,24 @@ config:
 #     heur_id: 7
 #     name: Safe file detected
 #     score: -1000
+heuristics:
+  - heur_id: 4
+    name: File is malicious
+    score: 1000
+    filetype: '*'
+    description: VMRay analysis verdict is malicious.
+
+  - heur_id: 3
+    name: File is suspicious
+    score: 500
+    filetype: '*'
+    description: VMRay analysis verdict is suspicious.
+
+  - heur_id: 0
+    name: File is clean
+    score: -250
+    filetype: '*'
+    description: VMRay analysis verdict is clean.
 
 # Docker configuration block which defines:
 #  - the name of the docker container that will be created
