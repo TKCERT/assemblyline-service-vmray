@@ -36,6 +36,9 @@ licence_count: 0
 config:
   vmray_service_url: ""
   vmray_service_api_key: ""
+  vmray_service_shareable: true
+  vmray_service_reanalyze: true
+  vmray_service_max_jobs: 1
   vmray_debug_add_json: false
   vmray_debug_sample_id: 0
   verify_certificate: true

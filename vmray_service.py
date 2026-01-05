@@ -17,6 +17,9 @@ from vmray.integration_kit import VMRaySubmissionKit
 class VMRayService(ServiceBase):
     VMRAY_SERVICE_URL_CONFIG_KEY: str = "vmray_service_url"
     VMRAY_SERVICE_API_KEY_CONFIG_KEY: str = "vmray_service_api_key"
+    VMRAY_SERVICE_SHAREABLE_CONFIG_KEY: str = "vmray_service_shareable"
+    VMRAY_SERVICE_REANALYZE_CONFIG_KEY: str = "vmray_service_reanalyze"
+    VMRAY_SERVICE_MAX_JOBS_CONFIG_KEY: str = "vmray_service_max_jobs"
     VMRAY_DEBUG_ADD_JSON_CONFIG_KEY: str = "vmray_debug_add_json"
     VMRAY_DEBUG_SAMPLE_ID_CONFIG_KEY: str = "vmray_debug_sample_id"
 
@@ -25,8 +28,11 @@ class VMRayService(ServiceBase):
 
         self.vmray_service_url = self.config.get(self.VMRAY_SERVICE_URL_CONFIG_KEY)
         self.vmray_service_api_key = self.config.get(self.VMRAY_SERVICE_API_KEY_CONFIG_KEY)
-        self.vmray_add_json = self.config.get(self.VMRAY_DEBUG_ADD_JSON_CONFIG_KEY, False)
-        self.vmray_sample_id = self.config.get(self.VMRAY_DEBUG_SAMPLE_ID_CONFIG_KEY, 0)
+        self.vmray_service_shareable = self.config.get(self.VMRAY_SERVICE_SHAREABLE_CONFIG_KEY, True)
+        self.vmray_service_reanalyze = self.config.get(self.VMRAY_SERVICE_REANALYZE_CONFIG_KEY, True)
+        self.vmray_service_max_jobs = self.config.get(self.VMRAY_SERVICE_MAX_JOBS_CONFIG_KEY, 1)
+        self.vmray_debug_add_json = self.config.get(self.VMRAY_DEBUG_ADD_JSON_CONFIG_KEY, False)
+        self.vmray_debug_sample_id = self.config.get(self.VMRAY_DEBUG_SAMPLE_ID_CONFIG_KEY, 0)
         self.verify = self.config.get("verify_certificate", True)
 
         if not self.vmray_service_url:
@@ -46,13 +52,14 @@ class VMRayService(ServiceBase):
         self.log.info(f"Submitting file to VMRay for analysis with timeout {self.service_attributes.timeout} seconds")
 
         submission_kit = VMRaySubmissionKit(self.vmray_service_url, self.vmray_service_api_key, self.verify)
-        if self.vmray_sample_id:
-            submission_results = submission_kit.get_submissions_from_sample_id(self.vmray_sample_id)[-1:]
+        if self.vmray_debug_sample_id:
+            submission_results = submission_kit.get_submissions_from_sample_id(self.vmray_debug_sample_id)[-1:]
         else:
             submission_results = submission_kit.submit_file(Path(request.file_path), params={
-                "shareable": True,  # indicates whether the hash of the sample will be shared with VirusTotal
-                "reanalyze": True,  # indicates whether a duplicate submission will create analysis jobs
-                "user_config": json.dumps({"timeout": int(self.service_attributes.timeout / 2)}),
+                "shareable": self.vmray_service_shareable,  # if the hash of the sample will be shared with VirusTotal
+                "reanalyze": self.vmray_service_reanalyze,  # if a duplicate submission will create analysis jobs
+                "max_jobs":  self.vmray_service_max_jobs,   # the maximum number of analysis jobs to create
+                "user_config": json.dumps({"timeout": int(self.service_attributes.timeout / 2)}),  # 50% job timeout
             })
 
         self.log.info(f"Retrieved {len(submission_results)} submission result(s) from VMRay, processing analyses")
@@ -124,7 +131,7 @@ class VMRayService(ServiceBase):
                             self._log_exception(analysis_section, f"Could not download screenshot '{screenshot_name}'")
                     analysis_section.add_subsection(image_section)
 
-                if self.vmray_add_json:
+                if self.vmray_debug_add_json:
                     analysis_json = ResultJSONSection("Analysis JSON", auto_collapse=True)
                     analysis_json.set_json(analysis)
                     analysis_section.add_subsection(analysis_json)
@@ -145,7 +152,7 @@ class VMRayService(ServiceBase):
                 except Exception:
                     self._log_exception(analysis_section, f"Could not create process tree for analysis #{analysis_id}")
 
-                if self.vmray_add_json:
+                if self.vmray_debug_add_json:
                     report_json = ResultJSONSection("Summary JSON", auto_collapse=True)
                     report_json.set_json(report)
                     analysis_section.add_subsection(report_json)
