@@ -117,7 +117,7 @@ heuristics:
 
   - heur_id: 0
     name: File is clean
-    score: -250
+    score: 0
     filetype: '*'
     description: VMRay analysis verdict is clean.
 
