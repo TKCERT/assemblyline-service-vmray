@@ -68,6 +68,7 @@ class VMRayService(ServiceBase):
         for submission_result in submission_results:
             sample_id = submission_result._sample_id
 
+            self.log.info(f"Downloading PDF report for sample #{sample_id}")
             self._download_pdf_report_as_supplementary(
                 request=request,
                 api=api,
@@ -87,6 +88,7 @@ class VMRayService(ServiceBase):
                     analysis_name = f"Analysis #{analysis_id}"
 
                 if analysis["analysis_pdf_created"]:
+                    self.log.info(f"Downloading PDF report for analysis #{analysis_id}")
                     self._download_pdf_report_as_supplementary(
                         request=request,
                         api=api,
@@ -116,6 +118,7 @@ class VMRayService(ServiceBase):
                     analysis_section.set_heuristic(0)
 
                 if analysis["analysis_analyzer_name"] in ("vmray", "vmray_web"):
+                    self.log.info(f"Downloading screenshots for analysis #{analysis_id}")
                     image_section = ResultImageSection(request, "Screenshots")
                     for screenshot_time, screenshot_name in self._iter_screenshots(api=api, analysis_id=analysis_id):
                         try:
@@ -137,17 +140,20 @@ class VMRayService(ServiceBase):
                     analysis_section.add_subsection(analysis_json)
 
                 try:
+                    self.log.info(f"Retrieving summary report for analysis #{analysis_id}")
                     report = json.load(submission_kit._api.get_report(analysis_id))
                 except Exception:
                     self._log_exception(analysis_section, f"Could not get summary report for analysis #{analysis_id}")
                     continue
 
                 try:
+                    self.log.info(f"Converting report to result for analysis #{analysis_id}")
                     self._convert_report_to_result(analysis_section, messages_section, report)
                 except Exception:
                     self._log_exception(analysis_section, f"Could not convert report for analysis #{analysis_id}")
 
                 try:
+                    self.log.info(f"Creating process tree for analysis #{analysis_id}")
                     self._create_process_tree(analysis_section, messages_section, report)
                 except Exception:
                     self._log_exception(analysis_section, f"Could not create process tree for analysis #{analysis_id}")
