@@ -126,7 +126,7 @@ heuristics:
 #  - cpu and ram allocation by the container
 docker_config:
   allow_internet_access: true
-  image: ${REGISTRY}fbicyber/assemblyline-service-vmray:$SERVICE_TAG
+  image: ${REGISTRY}tkcert/assemblyline-service-vmray:$SERVICE_TAG
   cpu_cores: 1.0
-  ram_mb_min: 128
-  ram_mb: 256
+  ram_mb_min: 512
+  ram_mb: 1024
