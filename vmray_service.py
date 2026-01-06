@@ -1,4 +1,6 @@
+import io
 import json
+import hashlib
 import os.path
 import shutil
 import tempfile
@@ -52,7 +54,7 @@ class VMRayService(ServiceBase):
         self.log.info(f"Submitting file to VMRay for analysis with timeout {self.service_attributes.timeout} seconds")
 
         submission_kit = VMRaySubmissionKit(self.vmray_service_url, self.vmray_service_api_key, self.verify)
-        if self.vmray_debug_sample_id:
+        if self.vmray_debug_sample_id and request.task.depth == 0:  # only use debug sample for top-level submissions
             submission_results = submission_kit.get_submissions_from_sample_id(self.vmray_debug_sample_id)[-1:]
         else:
             submission_results = submission_kit.submit_file(Path(request.file_path), params={
@@ -157,6 +159,29 @@ class VMRayService(ServiceBase):
                     self._create_process_tree(analysis_section, messages_section, report)
                 except Exception:
                     self._log_exception(analysis_section, f"Could not create process tree for analysis #{analysis_id}")
+
+                if "extracted_files" in report and "files" in report and "filenames" in report:
+                    self.log.info(f"Extracting files for analysis #{analysis_id}")
+                    for extracted_file in report["extracted_files"].values():
+                        file_record = self._follow_ref(report, extracted_file["ref_file"])
+                        if not file_record["is_ioc"] or "archive_path" not in file_record:
+                            continue
+                        filename_records = [self._follow_ref(report, ref) for ref in extracted_file["ref_filenames"]]
+                        filenames = [fn_r["filename"] for fn_r in filename_records if "filename" in fn_r]
+                        filenames.append(os.path.basename(file_record["archive_path"]))
+                        categories = ", ".join(extracted_file.get("categories", []))
+                        try:
+                            self._download_extracted_file(
+                                request=request,
+                                api=api,
+                                analysis_id=analysis_id,
+                                archive_path=file_record["archive_path"],
+                                extracted_file_name="; ".join(filenames),
+                                extracted_file_text=f"Extraction categories: {categories}",
+                                hash_values=file_record["hash_values"],
+                            )
+                        except Exception:
+                            self._log_exception(analysis_section, f"Could not download extracted file '{file_name}'")
 
                 if self.vmray_debug_add_json:
                     report_json = ResultJSONSection("Summary JSON", auto_collapse=True)
@@ -300,6 +325,16 @@ class VMRayService(ServiceBase):
         )
         analysis_section.add_subsection(process_tree_section)
 
+    def _follow_ref(
+        self,
+        report: Dict[str, Any],
+        ref: Dict[str, Any],
+    ) -> Any:
+        value = report
+        for key in ref["path"]:
+            value = value[key]
+        return value
+
     def _download(
         self,
         api: VMRayRESTAPI,
@@ -316,7 +351,7 @@ class VMRayService(ServiceBase):
         supplementary_description: str,
     ):
         with tempfile.NamedTemporaryFile(
-            mode="wb+",
+            mode="w+b",
             suffix=".pdf",
             prefix="vmray_report_",
             dir=self.working_directory,
@@ -324,6 +359,51 @@ class VMRayService(ServiceBase):
         ) as output_file:
             shutil.copyfileobj(self._download(api, report_endpoint), output_file)
             return request.add_supplementary(output_file.name, supplementary_filename, supplementary_description)
+
+    def _download_archive_file(
+        self,
+        api: VMRayRESTAPI,
+        analysis_id: int,
+        archive_path: str,
+        hash_values: Dict[str, str] = {},
+    ) -> str:
+        archive_file = self._download(
+            api,
+            file_endpoint=f"/rest/analysis/{analysis_id}/archive/{archive_path}",
+        )
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            suffix=os.path.basename(archive_path),
+            prefix=f"vmray_{os.path.dirname(archive_path)}_",
+            dir=self.working_directory,
+            delete=False,
+        ) as output_file:
+            shutil.copyfileobj(archive_file, output_file)
+            for key, value in hash_values.items():
+                if key.lower() not in hashlib.algorithms_available:
+                    continue
+                output_file.seek(0)
+                if hashlib.file_digest(output_file, key).hexdigest() != value: # type: ignore
+                    raise ValueError(f"Hash mismatch for extracted file '{archive_path}' using {key}")
+            return output_file.name
+
+    def _download_extracted_file(
+        self,
+        request: ServiceRequest,
+        api: VMRayRESTAPI,
+        analysis_id: int,
+        archive_path: str,
+        extracted_file_name: str,
+        extracted_file_text: str,
+        hash_values: Dict[str, str] = {},
+    ):
+        output_filename = self._download_archive_file(
+            api,
+            analysis_id,
+            archive_path,
+            hash_values=hash_values,
+        )
+        return request.add_extracted(output_filename, extracted_file_name, extracted_file_text)
 
     def _download_screenshot_into_image_section(
         self,
@@ -334,19 +414,12 @@ class VMRayService(ServiceBase):
         screenshot_name: str,
         screenshot_text: str,
     ):
-        screenshot_stream = self._download(
+        output_filename = self._download_archive_file(
             api,
-            file_endpoint=f"/rest/analysis/{analysis_id}/archive/screenshots/{screenshot_name}",
+            analysis_id,
+            f"screenshots/{screenshot_name}"
         )
-        with tempfile.NamedTemporaryFile(
-            mode="wb+",
-            suffix=screenshot_name,
-            prefix="vmray_screenshot_",
-            dir=self.working_directory,
-            delete=False,
-        ) as output_file:
-            shutil.copyfileobj(screenshot_stream, output_file)
-            return image_section.add_image(output_file.name, screenshot_name, screenshot_text)
+        return image_section.add_image(output_filename, screenshot_name, screenshot_text)
 
     def _iter_screenshots(
         self,
@@ -354,11 +427,13 @@ class VMRayService(ServiceBase):
         analysis_id: int,
     ) -> Any:
         try:
-            for screenshot in self._download(
+            screenshot_index =self._download(
                 api,
                 file_endpoint=f"/rest/analysis/{analysis_id}/archive/screenshots/index.log",
-            ).readlines():
-                screenshot_data = screenshot.decode().strip().split(" | ")
+            )
+            screenshot_index.auto_close = False
+            for screenshot_line in io.TextIOWrapper(screenshot_index, encoding='utf-8').readlines():
+                screenshot_data = screenshot_line.strip().split(" | ")
                 yield timedelta(milliseconds=int(screenshot_data[0])), screenshot_data[-1]
         except VMRayRESTAPIError as e:
             if e.status_code == 404:
