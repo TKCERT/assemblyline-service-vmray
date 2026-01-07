@@ -2,7 +2,7 @@ ARG branch=stable
 FROM cccs/assemblyline-v4-service-base:$branch
 
 # Python path to the service class from your service directory
-ENV SERVICE_PATH vmray_service.VMRayService
+ENV SERVICE_PATH=vmray_service.VMRayService
 
 # Install apt dependencies
 USER root
@@ -25,9 +25,9 @@ RUN pip install --no-cache-dir --user --requirement requirements.txt && \
     rm -rf ~/.cache/pip
 
 # Patch version in manifest
-ARG version=4.5.1.dev1
+ARG DOCKER_METADATA_OUTPUT_VERSION=4.5.1.dev1
 USER root
-RUN sed -i -e "s/\$SERVICE_TAG/$version/g" service_manifest.yml
+RUN sed -i -e "s/\$SERVICE_TAG/$DOCKER_METADATA_OUTPUT_VERSION/g" service_manifest.yml
 
 # Switch to assemblyline user
 USER assemblyline
