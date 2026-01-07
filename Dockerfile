@@ -1,4 +1,4 @@
-ARG branch=latest
+ARG branch=stable
 FROM cccs/assemblyline-v4-service-base:$branch
 
 # Python path to the service class from your service directory
@@ -25,7 +25,7 @@ RUN pip install --no-cache-dir --user --requirement requirements.txt && \
     rm -rf ~/.cache/pip
 
 # Patch version in manifest
-ARG version=4.6.0.dev1
+ARG version=4.5.1.dev1
 USER root
 RUN sed -i -e "s/\$SERVICE_TAG/$version/g" service_manifest.yml
 
