@@ -25,7 +25,7 @@ RUN pip install --no-cache-dir --user --requirement requirements.txt && \
     rm -rf ~/.cache/pip
 
 # Patch version in manifest
-ARG DOCKER_METADATA_OUTPUT_VERSION=4.5.1.dev1
+ARG DOCKER_METADATA_OUTPUT_VERSION=1.0.0.dev1
 USER root
 RUN sed -i -e "s/\$SERVICE_TAG/$DOCKER_METADATA_OUTPUT_VERSION/g" service_manifest.yml
 
