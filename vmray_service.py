@@ -57,12 +57,16 @@ class VMRayService(ServiceBase):
         if self.vmray_debug_sample_id and request.task.depth == 0:  # only use debug sample for top-level submissions
             submission_results = submission_kit.get_submissions_from_sample_id(self.vmray_debug_sample_id)[-1:]
         else:
-            submission_results = submission_kit.submit_file(Path(request.file_path), params={
+            submission_params = {
                 "shareable": self.vmray_service_shareable,  # if the hash of the sample will be shared with VirusTotal
                 "reanalyze": self.vmray_service_reanalyze,  # if a duplicate submission will create analysis jobs
                 "max_jobs":  self.vmray_service_max_jobs,   # the maximum number of analysis jobs to create
                 "user_config": json.dumps({"timeout": int(self.service_attributes.timeout / 2)}),  # 50% job timeout
-            })
+            }
+            if request.file_type.startswith("uri/"):
+                submission_results = submission_kit.submit_url(request.file_name, params=submission_params)
+            else:
+                submission_results = submission_kit.submit_file(Path(request.file_path), params=submission_params)
 
         self.log.info(f"Retrieved {len(submission_results)} submission result(s) from VMRay, processing analyses")
 
@@ -150,7 +154,7 @@ class VMRayService(ServiceBase):
 
                 try:
                     self.log.info(f"Converting report to result for analysis #{analysis_id}")
-                    self._convert_report_to_result(analysis_section, messages_section, report)
+                    self._convert_report_to_result(request, analysis_section, messages_section, report)
                 except Exception:
                     self._log_exception(analysis_section, f"Could not convert report for analysis #{analysis_id}")
 
@@ -169,7 +173,7 @@ class VMRayService(ServiceBase):
                         filename_records = [self._follow_ref(report, ref) for ref in extracted_file["ref_filenames"]]
                         filenames = [fn_r["filename"] for fn_r in filename_records if "filename" in fn_r]
                         filenames.append(os.path.basename(file_record["archive_path"]))
-                        categories = ", ".join(extracted_file.get("categories", []))
+                        categories = ", ".join(extracted_file.get("categories", ["n/a"]))
                         try:
                             self._download_extracted_file(
                                 request=request,
@@ -194,6 +198,7 @@ class VMRayService(ServiceBase):
 
     def _convert_report_to_result(
         self,
+        request: ServiceRequest,
         analysis_section: ResultTextSection,
         messages_section: ResultTextSection,
         report: Dict,
@@ -271,6 +276,11 @@ class VMRayService(ServiceBase):
                 if url["is_artifact"] or url["is_ioc"]:
                     section = messages_section if url["verdict"] == "clean" else analysis_section
                     section.add_tag("network.dynamic.uri", url["url"])
+                    url_categories = ", ".join(url.get("categories", ["n/a"]))
+                    url_operations = ", ".join(url.get("operations", ["n/a"]))
+                    url_sources = ", ".join(url.get("sources", ["n/a"]))
+                    url_text = f"Categories: {url_categories}; Operations: {url_operations}; Sources: {url_sources}"
+                    request.add_extracted_uri(url_text, url["url"])
 
         if "mutexes" in report:
             for mutex in report["mutexes"].values():
