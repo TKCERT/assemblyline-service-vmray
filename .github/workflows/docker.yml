@@ -24,6 +24,7 @@ jobs:
       platforms: linux/amd64
       build-args: |
         DOCKER_METADATA_OUTPUT_VERSION
+        branch=stable
       meta-images: |
         ghcr.io/tkcert/assemblyline-service-vmray
       meta-tags: |
