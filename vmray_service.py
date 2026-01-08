@@ -276,6 +276,7 @@ class VMRayService(ServiceBase):
                 if url["is_artifact"] or url["is_ioc"]:
                     section = messages_section if url["verdict"] == "clean" else analysis_section
                     section.add_tag("network.dynamic.uri", url["url"])
+                if url["is_ioc"]:
                     url_categories = ", ".join(url.get("categories", ["n/a"]))
                     url_operations = ", ".join(url.get("operations", ["n/a"]))
                     url_sources = ", ".join(url.get("sources", ["n/a"]))
