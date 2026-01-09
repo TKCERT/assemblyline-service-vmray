@@ -231,7 +231,18 @@ class VMRayService(ServiceBase):
             if "v4" in mitre_attack:
                 techniques = mitre_attack["v4"].get("techniques", {}).values()
                 for technique in techniques:
-                    analysis_section.heuristic.add_attack_id(technique["technique_id"])
+                    analysis_score = 0
+                    vti_matches = [self._follow_ref(report, ref) for ref in technique["ref_vti_matches"]]
+                    for vti in vti_matches:
+                        analysis_score = max(analysis_score, vti["analysis_score"])
+                    if analysis_score >= 4:
+                        section = verdict_sections[VMRayVerdict.MALICIOUS]
+                    elif analysis_score >= 2:
+                        section = verdict_sections[VMRayVerdict.SUSPICIOUS]
+                    else:
+                        section = verdict_sections[VMRayVerdict.CLEAN]
+                    if section.heuristic:
+                        section.heuristic.add_attack_id(technique["technique_id"])
 
         if "anti_virus" in report:
             for av_engine in report["anti_virus"].values():
@@ -326,9 +337,9 @@ class VMRayService(ServiceBase):
         def build_signatures(proc):
             if "verdict" in proc:
                 verdict = proc["verdict"]
-                if verdict == "malicious":
+                if verdict == VMRayVerdict.MALICIOUS:
                     score = 1000
-                elif verdict == "suspicious":
+                elif verdict == VMRayVerdict.SUSPICIOUS:
                     score = 500
                 else:
                     score = 0
