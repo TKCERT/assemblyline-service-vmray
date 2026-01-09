@@ -1,4 +1,5 @@
 import io
+import enum
 import json
 import hashlib
 import os.path
@@ -15,6 +16,12 @@ from assemblyline_v4_service.common.result import (
 )
 from vmray.rest_api import VMRayRESTAPI, VMRayRESTAPIError
 from vmray.integration_kit import VMRaySubmissionKit
+
+class VMRayVerdict(enum.StrEnum):
+    MALICIOUS = "malicious"
+    SUSPICIOUS = "suspicious"
+    NOT_AVAILABLE = "not_available"
+    CLEAN = "clean"
 
 class VMRayService(ServiceBase):
     VMRAY_SERVICE_URL_CONFIG_KEY: str = "vmray_service_url"
@@ -106,9 +113,6 @@ class VMRayService(ServiceBase):
                 analysis_section = ResultTextSection(analysis_name)
                 request.result.add_section(analysis_section)
 
-                messages_section = ResultTextSection("Notes")
-                analysis_section.add_subsection(messages_section)
-
                 analysis_verdict = analysis.get("analysis_verdict", "unknown")
                 reason_code = analysis.get("analysis_verdict_reason_code", analysis.get("analysis_result_code"))
                 reason_text = analysis.get("analysis_verdict_reason_description", analysis.get("analysis_result_str"))
@@ -116,12 +120,17 @@ class VMRayService(ServiceBase):
                     analysis_section.add_line(f"VERDICT: {analysis_verdict} ({reason_code}: {reason_text})")
                 else:
                     analysis_section.add_line(f"VERDICT: {analysis_verdict}")
-                if analysis_verdict == "malicious":
-                    analysis_section.set_heuristic(4)
-                elif analysis_verdict == "suspicious":
-                    analysis_section.set_heuristic(3)
-                elif analysis_verdict == "clean":
-                    analysis_section.set_heuristic(0)
+
+                verdict_sections = {analysis_verdict: analysis_section}
+                for verdict in VMRayVerdict:
+                    if verdict not in verdict_sections:
+                        verdict_sections[verdict] = ResultTextSection(f"Other {verdict} results")
+                    if verdict == VMRayVerdict.MALICIOUS:
+                        verdict_sections[verdict].set_heuristic(4)
+                    elif verdict == VMRayVerdict.SUSPICIOUS:
+                        verdict_sections[verdict].set_heuristic(3)
+                    elif verdict == VMRayVerdict.CLEAN and analysis_verdict == VMRayVerdict.CLEAN:
+                        verdict_sections[verdict].set_heuristic(0)
 
                 if analysis["analysis_analyzer_name"] in ("vmray", "vmray_web"):
                     self.log.info(f"Downloading screenshots for analysis #{analysis_id}")
@@ -154,7 +163,7 @@ class VMRayService(ServiceBase):
 
                 try:
                     self.log.info(f"Converting report to result for analysis #{analysis_id}")
-                    self._convert_report_to_result(request, analysis_section, messages_section, report)
+                    self._convert_report_to_result(request, analysis_section, verdict_sections, report)
                 except Exception:
                     self._log_exception(analysis_section, f"Could not convert report for analysis #{analysis_id}")
 
@@ -193,6 +202,10 @@ class VMRayService(ServiceBase):
                     report_json.set_json(report)
                     analysis_section.add_subsection(report_json)
 
+                for verdict_section in verdict_sections.values():
+                    if verdict_section is not analysis_section and verdict_section.tags:
+                        analysis_section.add_subsection(verdict_section)
+
     def _log_exception(self, section: ResultTextSection, message: str) -> None:
         self.log.exception(message)
         section.add_line(f"EXCEPTION: {message}")
@@ -201,7 +214,7 @@ class VMRayService(ServiceBase):
         self,
         request: ServiceRequest,
         analysis_section: ResultTextSection,
-        messages_section: ResultTextSection,
+        verdict_sections: Dict[VMRayVerdict, ResultTextSection],
         report: Dict,
     ) -> None:
         if "remarks" in report:
@@ -224,13 +237,18 @@ class VMRayService(ServiceBase):
             for av_engine in report["anti_virus"].values():
                 av_matches = av_engine.get("matches", {}).values()
                 for av in av_matches:
-                    section = messages_section if av["verdict"] == "clean" else analysis_section
+                    section = verdict_sections[av["verdict"]]
                     section.add_tag("av.virus_name", av["threat"]["name"])
 
         if "vti" in report:
             vti_matches = report["vti"].get("matches", {}).values()
             for vti in vti_matches:
-                section = messages_section if vti["analysis_score"] < 2 else analysis_section
+                if vti["analysis_score"] >= 4:
+                    section = verdict_sections[VMRayVerdict.MALICIOUS]
+                elif vti["analysis_score"] >= 2:
+                    section = verdict_sections[VMRayVerdict.SUSPICIOUS]
+                else:
+                    section = verdict_sections[VMRayVerdict.CLEAN]
                 section.add_tag("dynamic.signature.category", vti["category_desc"])
                 section.add_tag("dynamic.signature.name", vti["operation_desc"])
                 for vti_threat in vti.get("threat_names", []):
@@ -245,37 +263,37 @@ class VMRayService(ServiceBase):
             for filename in report["filenames"].values():
                 if filename["is_artifact"] or filename["is_ioc"]:
                     for original_filename in filename.get("original_filenames", []):
-                        section = messages_section if filename["verdict"] == "clean" else analysis_section
+                        section = verdict_sections[filename["verdict"]]
                         section.add_tag("file.name.extracted", original_filename["filename"])
 
         if "emails" in report:
             for email in report["emails"].values():
                 if email["is_artifact"] or email["is_ioc"]:
-                    section = messages_section if email["verdict"] == "clean" else analysis_section
+                    section = verdict_sections[email["verdict"]]
                     section.add_tag("network.email.subject", email["subject"])
 
         if "email_addresses" in report:
             for email_address in report["email_addresses"].values():
                 if email_address["is_artifact"] or email_address["is_ioc"]:
-                    section = messages_section if email_address["verdict"] == "clean" else analysis_section
+                    section = verdict_sections[email_address["verdict"]]
                     section.add_tag("network.email.address", email_address["email_address"])
 
         if "domains" in report:
             for domain in report["domains"].values():
                 if domain["is_artifact"] or domain["is_ioc"]:
-                    section = messages_section if domain["verdict"] == "clean" else analysis_section
+                    section = verdict_sections[domain["verdict"]]
                     section.add_tag("network.dynamic.domain", domain["domain"])
 
         if "ip_addresses" in report:
             for ip_address in report["ip_addresses"].values():
                 if ip_address["is_artifact"] or ip_address["is_ioc"]:
-                    section = messages_section if ip_address["verdict"] == "clean" else analysis_section
+                    section = verdict_sections[ip_address["verdict"]]
                     section.add_tag("network.dynamic.ip", ip_address["ip_address"])
 
         if "urls" in report:
             for url in report["urls"].values():
                 if url["is_artifact"] or url["is_ioc"]:
-                    section = messages_section if url["verdict"] == "clean" else analysis_section
+                    section = verdict_sections[url["verdict"]]
                     section.add_tag("network.dynamic.uri", url["url"])
                 if url["is_ioc"]:
                     url_categories = ", ".join(url.get("categories", ["n/a"]))
@@ -287,13 +305,13 @@ class VMRayService(ServiceBase):
         if "mutexes" in report:
             for mutex in report["mutexes"].values():
                 if mutex["is_artifact"] or mutex["is_ioc"]:
-                    section = messages_section if mutex["verdict"] == "clean" else analysis_section
+                    section = verdict_sections[mutex["verdict"]]
                     section.add_tag("dynamic.mutex", mutex["name"])
 
         if "registry_records" in report:
             for registry_record in report["registry_records"].values():
                 if registry_record["is_artifact"] or registry_record["is_ioc"]:
-                    section = messages_section if registry_record["verdict"] == "clean" else analysis_section
+                    section = verdict_sections[registry_record["verdict"]]
                     section.add_tag("dynamic.registry_key", registry_record["reg_key_name"])
 
     def _create_process_tree(

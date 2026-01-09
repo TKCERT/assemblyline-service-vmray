@@ -56,19 +56,19 @@ config:
 #     score: 100
 heuristics:
   - heur_id: 4
-    name: File is malicious
+    name: Malicious verdict
     score: 1000
     filetype: '*'
     description: VMRay analysis verdict is malicious.
 
   - heur_id: 3
-    name: File is suspicious
+    name: Suspicious verdict
     score: 500
     filetype: '*'
     description: VMRay analysis verdict is suspicious.
 
   - heur_id: 0
-    name: File is clean
+    name: Clean verdict
     score: 0
     filetype: '*'
     description: VMRay analysis verdict is clean.
