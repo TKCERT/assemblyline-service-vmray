@@ -21,6 +21,10 @@ timeout: 600
 # is the service enabled by default
 enabled: true
 
+# avoid recursion on extracted files
+recursion_prevention:
+  - Dynamic Analysis
+
 # Service configuration block (dictionary of config variables)
 #     NOTE: The key names can be anything and the value can be of any types
 config:
