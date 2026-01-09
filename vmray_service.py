@@ -160,7 +160,7 @@ class VMRayService(ServiceBase):
 
                 try:
                     self.log.info(f"Creating process tree for analysis #{analysis_id}")
-                    self._create_process_tree(analysis_section, messages_section, report)
+                    self._create_process_tree(analysis_section, report)
                 except Exception:
                     self._log_exception(analysis_section, f"Could not create process tree for analysis #{analysis_id}")
 
@@ -170,9 +170,10 @@ class VMRayService(ServiceBase):
                         file_record = self._follow_ref(report, extracted_file["ref_file"])
                         if not file_record["is_ioc"] or "archive_path" not in file_record:
                             continue
+                        filename = os.path.basename(file_record["archive_path"])
                         filename_records = [self._follow_ref(report, ref) for ref in extracted_file["ref_filenames"]]
                         filenames = [fn_r["filename"] for fn_r in filename_records if "filename" in fn_r]
-                        filenames.append(os.path.basename(file_record["archive_path"]))
+                        filenames.append(filename)
                         categories = ", ".join(extracted_file.get("categories", ["n/a"]))
                         try:
                             self._download_extracted_file(
@@ -185,7 +186,7 @@ class VMRayService(ServiceBase):
                                 hash_values=file_record["hash_values"],
                             )
                         except Exception:
-                            self._log_exception(analysis_section, f"Could not download extracted file '{file_name}'")
+                            self._log_exception(analysis_section, f"Could not download extracted file '{filename}'")
 
                 if self.vmray_debug_add_json:
                     report_json = ResultJSONSection("Summary JSON", auto_collapse=True)
@@ -205,12 +206,12 @@ class VMRayService(ServiceBase):
     ) -> None:
         if "remarks" in report:
             remarks = report["remarks"]
-            for info in remarks.get("infos", []):
-                messages_section.add_line(f"INFO: {info['message']}")
-            for warning in remarks.get("warnings", []):
-                analysis_section.add_line(f"WARNING: {warning['message']}")
             for error in remarks.get("errors", []):
                 analysis_section.add_line(f"ERROR: {error['message']}")
+            for warning in remarks.get("warnings", []):
+                analysis_section.add_line(f"WARNING: {warning['message']}")
+            for info in remarks.get("infos", []):
+                analysis_section.add_line(f"INFO: {info['message']}")
 
         if "mitre_attack" in report:
             mitre_attack = report["mitre_attack"]
@@ -298,11 +299,10 @@ class VMRayService(ServiceBase):
     def _create_process_tree(
         self,
         analysis_section: ResultTextSection,
-        messages_section: ResultTextSection,
         report: Dict,
     ) -> None:
         if "processes" not in report:
-            messages_section.add_line("INFO: No process information available in the report")
+            analysis_section.add_line("INFO: No process information available in the report.")
             return
 
         def build_signatures(proc):
