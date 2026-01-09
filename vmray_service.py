@@ -300,7 +300,7 @@ class VMRayService(ServiceBase):
                     url_operations = ", ".join(url.get("operations", ["n/a"]))
                     url_sources = ", ".join(url.get("sources", ["n/a"]))
                     url_text = f"Categories: {url_categories}; Operations: {url_operations}; Sources: {url_sources}"
-                    request.add_extracted_uri(url_text, url["url"])
+                    request.add_extracted_uri(url_text, url["url"], allow_dynamic_recursion=False)
 
         if "mutexes" in report:
             for mutex in report["mutexes"].values():
