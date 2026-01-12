@@ -70,6 +70,10 @@ class VMRayService(ServiceBase):
                 "max_jobs":  self.vmray_service_max_jobs,   # the maximum number of analysis jobs to create
                 "user_config": json.dumps({"timeout": int(self.service_attributes.timeout / 2)}),  # 50% job timeout
             }
+            submission_passwords = request.temp_submission_data.get("passwords", [])
+            if submission_passwords:
+                submission_params["archive_password"] = submission_passwords[0]
+                submission_params["document_password"] = submission_passwords[0]
             if request.file_type.startswith("uri/"):
                 submission_results = submission_kit.submit_url(request.file_name, params=submission_params)
             else:
