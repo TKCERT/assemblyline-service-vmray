@@ -12,10 +12,19 @@ from pathlib import Path
 from assemblyline_v4_service.common.base import ServiceBase
 from assemblyline_v4_service.common.request import ServiceRequest
 from assemblyline_v4_service.common.result import (
-    BODY_FORMAT, Result, ResultSection, ResultImageSection, ResultTextSection, ResultJSONSection
+    BODY_FORMAT,
+    Heuristic,
+    Result,
+    ResultSection,
+    ResultImageSection,
+    ResultTextSection,
+    ResultJSONSection,
+    ResultSandboxSection,
 )
 from vmray.rest_api import VMRayRESTAPI, VMRayRESTAPIError
 from vmray.integration_kit import VMRaySubmissionKit
+
+from vmray_result import VMRayResult
 
 class VMRayVerdict(enum.StrEnum):
     MALICIOUS = "malicious"
@@ -176,6 +185,12 @@ class VMRayService(ServiceBase):
                     self._create_process_tree(analysis_section, report)
                 except Exception:
                     self._log_exception(analysis_section, f"Could not create process tree for analysis #{analysis_id}")
+
+                try:
+                    self.log.info(f"Creating sandbox info for analysis #{analysis_id}")
+                    self._create_sandbox_info(analysis_section, analysis, report, request)
+                except Exception:
+                    self._log_exception(analysis_section, f"Could not create sandbox info for analysis #{analysis_id}")
 
                 if "extracted_files" in report and "files" in report and "filenames" in report:
                     self.log.info(f"Extracting files for analysis #{analysis_id}")
@@ -369,6 +384,18 @@ class VMRayService(ServiceBase):
             body=json.dumps(list(build_process_tree(processes)))
         )
         analysis_section.add_subsection(process_tree_section)
+
+    def _create_sandbox_info(
+        self,
+        analysis_section: ResultTextSection,
+        analysis: Dict[str, Any],
+        report: Dict,
+        request: ServiceRequest,
+    ) -> None:
+        sandbox_section = ResultSandboxSection("Sandbox Information")
+        vmray_result = VMRayResult(analysis, report, request.task.service_default_result_classification)
+        vmray_result.populate_sandbox_section(sandbox_section)
+        analysis_section.add_subsection(sandbox_section)
 
     def _follow_ref(
         self,
