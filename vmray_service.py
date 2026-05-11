@@ -269,10 +269,11 @@ class VMRayService(ServiceBase):
                 for vti_threat in vti.get("threat_names", []):
                     section.add_tag("dynamic.signature.family", vti_threat)
 
-        if "yara" in report:
-            yara_matches = report["yara"].get("matches", {}).values()
-            for yara_rule in yara_matches:
-                analysis_section.heuristic.add_signature_id(yara_rule["rule_name"])
+        if isinstance(analysis_section.heuristic, Heuristic):
+            if "yara" in report:
+                yara_matches = report["yara"].get("matches", {}).values()
+                for yara_rule in yara_matches:
+                    analysis_section.heuristic.add_signature_id(yara_rule["rule_name"])
 
         if "filenames" in report:
             for filename in report["filenames"].values():
