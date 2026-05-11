@@ -62,7 +62,7 @@ class VMRayService(ServiceBase):
 
         submission_kit = VMRaySubmissionKit(self.vmray_service_url, self.vmray_service_api_key, self.verify)
         if self.vmray_debug_sample_id and request.task.depth == 0:  # only use debug sample for top-level submissions
-            submission_results = submission_kit.get_submissions_from_sample_id(self.vmray_debug_sample_id)[-1:]
+            submission_results = submission_kit.get_submissions_from_sample_id(self.vmray_debug_sample_id)[:1]
         else:
             submission_params = {
                 "shareable": self.vmray_service_shareable,  # if the hash of the sample will be shared with VirusTotal
