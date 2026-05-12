@@ -38,6 +38,7 @@ class VMRayService(ServiceBase):
     VMRAY_SERVICE_SHAREABLE_CONFIG_KEY: str = "vmray_service_shareable"
     VMRAY_SERVICE_REANALYZE_CONFIG_KEY: str = "vmray_service_reanalyze"
     VMRAY_SERVICE_MAX_JOBS_CONFIG_KEY: str = "vmray_service_max_jobs"
+    VMRAY_SERVICE_ANALYSIS_TIMEOUT_CONFIG_KEY: str = "vmray_service_analysis_timeout"
     VMRAY_DEBUG_ADD_JSON_CONFIG_KEY: str = "vmray_debug_add_json"
     VMRAY_DEBUG_SAMPLE_ID_CONFIG_KEY: str = "vmray_debug_sample_id"
 
@@ -49,6 +50,8 @@ class VMRayService(ServiceBase):
         self.vmray_service_shareable = self.config.get(self.VMRAY_SERVICE_SHAREABLE_CONFIG_KEY, True)
         self.vmray_service_reanalyze = self.config.get(self.VMRAY_SERVICE_REANALYZE_CONFIG_KEY, True)
         self.vmray_service_max_jobs = self.config.get(self.VMRAY_SERVICE_MAX_JOBS_CONFIG_KEY, 1)
+        self.vmray_service_analysis_timeout = self.config.get(self.VMRAY_SERVICE_ANALYSIS_TIMEOUT_CONFIG_KEY,
+                                                              self.service_attributes.timeout / 3)
         self.vmray_debug_add_json = self.config.get(self.VMRAY_DEBUG_ADD_JSON_CONFIG_KEY, False)
         self.vmray_debug_sample_id = self.config.get(self.VMRAY_DEBUG_SAMPLE_ID_CONFIG_KEY, 0)
         self.verify = self.config.get("verify_certificate", True)
@@ -67,7 +70,7 @@ class VMRayService(ServiceBase):
 
         request.result = Result()
 
-        self.log.info(f"Submitting file to VMRay for analysis with timeout {self.service_attributes.timeout} seconds")
+        self.log.info(f"Submitting file to VMRay for analysis with timeout {self.vmray_service_analysis_timeout} seconds")
 
         submission_kit = VMRaySubmissionKit(self.vmray_service_url, self.vmray_service_api_key, self.verify)
         if self.vmray_debug_sample_id and request.task.depth == 0:  # only use debug sample for top-level submissions
@@ -77,7 +80,7 @@ class VMRayService(ServiceBase):
                 "shareable": self.vmray_service_shareable,  # if the hash of the sample will be shared with VirusTotal
                 "reanalyze": self.vmray_service_reanalyze,  # if a duplicate submission will create analysis jobs
                 "max_jobs":  self.vmray_service_max_jobs,   # the maximum number of analysis jobs to create
-                "user_config": json.dumps({"timeout": int(self.service_attributes.timeout / 3)}),  # 33% job timeout
+                "user_config": json.dumps({"timeout": int(self.vmray_service_analysis_timeout)}),
             }
             submission_passwords = request.temp_submission_data.get("passwords", [])
             if submission_passwords:
