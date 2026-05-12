@@ -381,7 +381,8 @@ class VMRayService(ServiceBase):
         process_tree_section = ResultSection(
             "Process Tree",
             body_format=BODY_FORMAT.PROCESS_TREE,
-            body=json.dumps(list(build_process_tree(processes)))
+            body=json.dumps(list(build_process_tree(processes))),
+            auto_collapse=True,
         )
         analysis_section.add_subsection(process_tree_section)
 
