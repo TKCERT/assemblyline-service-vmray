@@ -77,7 +77,7 @@ class VMRayService(ServiceBase):
                 "shareable": self.vmray_service_shareable,  # if the hash of the sample will be shared with VirusTotal
                 "reanalyze": self.vmray_service_reanalyze,  # if a duplicate submission will create analysis jobs
                 "max_jobs":  self.vmray_service_max_jobs,   # the maximum number of analysis jobs to create
-                "user_config": json.dumps({"timeout": int(self.service_attributes.timeout / 2)}),  # 50% job timeout
+                "user_config": json.dumps({"timeout": int(self.service_attributes.timeout / 3)}),  # 33% job timeout
             }
             submission_passwords = request.temp_submission_data.get("passwords", [])
             if submission_passwords:
