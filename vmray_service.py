@@ -5,6 +5,7 @@ import hashlib
 import os.path
 import shutil
 import tempfile
+from email.utils import parseaddr
 from datetime import timedelta
 from typing import Any, Dict, Optional
 from pathlib import Path
@@ -309,8 +310,10 @@ class VMRayService(ServiceBase):
         if "email_addresses" in report:
             for email_address in report["email_addresses"].values():
                 if email_address["is_artifact"] or email_address["is_ioc"]:
-                    section = verdict_sections[email_address["verdict"]]
-                    section.add_tag("network.email.address", email_address["email_address"])
+                    address = parseaddr(email_address["email_address"])[1]
+                    if address:
+                        section = verdict_sections[email_address["verdict"]]
+                        section.add_tag("network.email.address", address)
 
         if "domains" in report:
             for domain in report["domains"].values():
