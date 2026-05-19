@@ -91,4 +91,4 @@ docker_config:
   image: ${REGISTRY}ghcr.io/tkcert/assemblyline-service-vmray:$SERVICE_TAG
   cpu_cores: 1.0
   ram_mb_min: 512
-  ram_mb: 1024
+  ram_mb: 2048
