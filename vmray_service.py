@@ -203,7 +203,8 @@ class VMRayService(ServiceBase):
                         if not file_record["is_ioc"] or "archive_path" not in file_record:
                             continue
                         filename = os.path.basename(file_record["archive_path"])
-                        filename_records = [self._follow_ref(report, ref) for ref in extracted_file["ref_filenames"]]
+                        filename_refs = extracted_file.get("ref_filenames", [])
+                        filename_records = [self._follow_ref(report, ref) for ref in filename_refs]
                         filenames = [fn_r["filename"] for fn_r in filename_records if "filename" in fn_r]
                         filenames.append(filename)
                         categories = ", ".join(extracted_file.get("categories", ["n/a"]))
