@@ -1,6 +1,7 @@
 import io
 import enum
 import json
+import time
 import hashlib
 import os.path
 import shutil
@@ -40,6 +41,7 @@ class VMRayService(ServiceBase):
     VMRAY_SERVICE_REANALYZE_CONFIG_KEY: str = "vmray_service_reanalyze"
     VMRAY_SERVICE_MAX_JOBS_CONFIG_KEY: str = "vmray_service_max_jobs"
     VMRAY_SERVICE_ANALYSIS_TIMEOUT_CONFIG_KEY: str = "vmray_service_analysis_timeout"
+    VMRAY_SERVICE_PROCESSING_TIME_CONFIG_KEY: str = "vmray_service_processing_time"
     VMRAY_DEBUG_ADD_JSON_CONFIG_KEY: str = "vmray_debug_add_json"
     VMRAY_DEBUG_SAMPLE_ID_CONFIG_KEY: str = "vmray_debug_sample_id"
 
@@ -53,6 +55,7 @@ class VMRayService(ServiceBase):
         self.vmray_service_max_jobs = self.config.get(self.VMRAY_SERVICE_MAX_JOBS_CONFIG_KEY, 1)
         self.vmray_service_analysis_timeout = self.config.get(self.VMRAY_SERVICE_ANALYSIS_TIMEOUT_CONFIG_KEY,
                                                               self.service_attributes.timeout / 3)
+        self.vmray_service_processing_time = self.config.get(self.VMRAY_SERVICE_PROCESSING_TIME_CONFIG_KEY, 90)
         self.vmray_debug_add_json = self.config.get(self.VMRAY_DEBUG_ADD_JSON_CONFIG_KEY, False)
         self.vmray_debug_sample_id = self.config.get(self.VMRAY_DEBUG_SAMPLE_ID_CONFIG_KEY, 0)
         self.verify = self.config.get("verify_certificate", True)
@@ -67,6 +70,8 @@ class VMRayService(ServiceBase):
         self.log.info(f"start() from {self.service_attributes.name} service called")
 
     def execute(self, request: ServiceRequest) -> None:
+        deadline = time.time() + int(self.service_attributes.timeout) - int(self.vmray_service_processing_time)
+
         self.log.info(f"execute() from {self.service_attributes.name} service called for '{request.file_name}'")
 
         request.result = Result()
@@ -88,9 +93,30 @@ class VMRayService(ServiceBase):
                 submission_params["archive_password"] = submission_passwords[0]
                 submission_params["document_password"] = submission_passwords[0]
             if request.file_type.startswith("uri/"):
-                submission_results = submission_kit.submit_url(request.file_name, params=submission_params)
+                submission_results = submission_kit.submit_url(request.file_name, False, params=submission_params)
             else:
-                submission_results = submission_kit.submit_file(Path(request.file_path), params=submission_params)
+                submission_filepath = Path(request.file_path)
+                submission_results = submission_kit.submit_file(submission_filepath, False, params=submission_params)
+
+        self.log.info(f"Submission upload to VMRay completed, waiting for results")
+
+        submission_finished = set()
+        while len(submission_finished) < len(submission_results):
+            time.sleep(5)
+            for submission_result in submission_results:
+                if submission_result.is_finished():
+                    submission_finished.add(submission_result.submission_id)
+                    self.log.info(f"Submission #{submission_result.submission_id} finished with verdict '{submission_result.verdict}' ({len(submission_finished)}/{len(submission_results)})")
+            if time.time() >= deadline:
+                self.log.warning("Timeout reached while waiting for VMRay submissions to finish")
+                jobs = submission_kit._api.call("GET", f"/rest/job?job_submission_id={submission_result.submission_id}")
+                jobs_status = {}
+                for job in jobs:
+                    job_status = job["job_status"]
+                    jobs_status[job_status] = jobs_status.get(job_status, 0) + 1
+                request.set_service_context("Incomplete VMRay submission results due to unfinished analysis jobs: " +
+                                            ", ".join(f"{status}: {count}" for status, count in jobs_status.items()))
+                break
 
         self.log.info(f"Retrieved {len(submission_results)} submission result(s) from VMRay, processing analyses")
 
