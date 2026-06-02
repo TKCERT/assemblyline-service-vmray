@@ -34,6 +34,7 @@ recursion_prevention:
 #     NOTE: The key names can be anything and the value can be of any types
 config:
   vmray_service_url: ""
+  vmray_service_api_url: ""
   vmray_service_api_key: ""
   vmray_service_shareable: true
   vmray_service_reanalyze: true

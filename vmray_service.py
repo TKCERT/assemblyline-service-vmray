@@ -18,6 +18,7 @@ from assemblyline_v4_service.common.result import (
     Heuristic,
     Result,
     ResultSection,
+    ResultURLSection,
     ResultImageSection,
     ResultTextSection,
     ResultJSONSection,
@@ -36,6 +37,7 @@ class VMRayVerdict(enum.StrEnum):
 
 class VMRayService(ServiceBase):
     VMRAY_SERVICE_URL_CONFIG_KEY: str = "vmray_service_url"
+    VMRAY_SERVICE_API_URL_CONFIG_KEY: str = "vmray_service_api_url"
     VMRAY_SERVICE_API_KEY_CONFIG_KEY: str = "vmray_service_api_key"
     VMRAY_SERVICE_SHAREABLE_CONFIG_KEY: str = "vmray_service_shareable"
     VMRAY_SERVICE_REANALYZE_CONFIG_KEY: str = "vmray_service_reanalyze"
@@ -49,6 +51,7 @@ class VMRayService(ServiceBase):
         super(VMRayService, self).__init__(config)
 
         self.vmray_service_url = self.config.get(self.VMRAY_SERVICE_URL_CONFIG_KEY)
+        self.vmray_service_api_url = self.config.get(self.VMRAY_SERVICE_API_URL_CONFIG_KEY, self.vmray_service_url)
         self.vmray_service_api_key = self.config.get(self.VMRAY_SERVICE_API_KEY_CONFIG_KEY)
         self.vmray_service_shareable = self.config.get(self.VMRAY_SERVICE_SHAREABLE_CONFIG_KEY, True)
         self.vmray_service_reanalyze = self.config.get(self.VMRAY_SERVICE_REANALYZE_CONFIG_KEY, True)
@@ -60,14 +63,17 @@ class VMRayService(ServiceBase):
         self.vmray_debug_sample_id = self.config.get(self.VMRAY_DEBUG_SAMPLE_ID_CONFIG_KEY, 0)
         self.verify = self.config.get("verify_certificate", True)
 
-        if not self.vmray_service_url:
-            raise RuntimeError("VMRay service URL not set in the config. Check the config section in the manifest?")
+        if not self.vmray_service_api_url:
+            raise RuntimeError("VMRay service API URL not set in the config. Check the config section in the manifest?")
 
         if not self.vmray_service_api_key:
             raise RuntimeError("VMRay service API key not set in the config. Check the config section in the manifest?")
 
     def start(self):
         self.log.info(f"start() from {self.service_attributes.name} service called")
+
+        self.submission_kit = VMRaySubmissionKit(self.vmray_service_api_url, self.vmray_service_api_key, self.verify)
+        self.vmray_api = self.submission_kit._api
 
     def execute(self, request: ServiceRequest) -> None:
         deadline = time.time() + int(self.service_attributes.timeout) - int(self.vmray_service_processing_time)
@@ -76,11 +82,10 @@ class VMRayService(ServiceBase):
 
         request.result = Result()
 
-        self.log.info(f"Submitting file to VMRay for analysis with timeout {self.vmray_service_analysis_timeout} seconds")
+        self.log.info(f"Submitting file to VMRay with timeout {self.vmray_service_analysis_timeout} seconds")
 
-        submission_kit = VMRaySubmissionKit(self.vmray_service_url, self.vmray_service_api_key, self.verify)
         if self.vmray_debug_sample_id and request.task.depth == 0:  # only use debug sample for top-level submissions
-            submission_results = submission_kit.get_submissions_from_sample_id(self.vmray_debug_sample_id)[:1]
+            submission_results = self.submission_kit.get_submissions_from_sample_id(self.vmray_debug_sample_id)[:1]
         else:
             submission_params = {
                 "shareable": self.vmray_service_shareable,  # if the hash of the sample will be shared with VirusTotal
@@ -153,7 +158,11 @@ class VMRayService(ServiceBase):
                         supplementary_description=analysis_name,
                     )
 
-                analysis_section = ResultTextSection(analysis_name)
+                analysis_section = ResultURLSection(analysis_name)
+                base_url = self.vmray_service_url or self.vmray_service_api_url
+                if base_url:
+                    analysis_section.add_url(f"{base_url}/analysis/{analysis_id}",
+                                             f"View analysis #{analysis_id} in VMRay")
                 request.result.add_section(analysis_section)
 
                 analysis_verdict = analysis.get("analysis_verdict", "unknown")
@@ -164,7 +173,7 @@ class VMRayService(ServiceBase):
                 else:
                     analysis_section.add_line(f"VERDICT: {analysis_verdict}")
 
-                verdict_sections = {analysis_verdict: analysis_section}
+                verdict_sections: Dict[VMRayVerdict, ResultSection] = {analysis_verdict: analysis_section}
                 for verdict in VMRayVerdict:
                     if verdict not in verdict_sections:
                         verdict_sections[verdict] = ResultTextSection(f"Other {verdict} results")
@@ -256,15 +265,15 @@ class VMRayService(ServiceBase):
                     if verdict_section is not analysis_section and verdict_section.tags:
                         analysis_section.add_subsection(verdict_section)
 
-    def _log_exception(self, section: ResultTextSection, message: str) -> None:
+    def _log_exception(self, section: ResultSection, message: str) -> None:
         self.log.exception(message)
         section.add_line(f"EXCEPTION: {message}")
 
     def _convert_report_to_result(
         self,
         request: ServiceRequest,
-        analysis_section: ResultTextSection,
-        verdict_sections: Dict[VMRayVerdict, ResultTextSection],
+        analysis_section: ResultSection,
+        verdict_sections: Dict[VMRayVerdict, ResultSection],
         report: Dict,
     ) -> None:
         if "remarks" in report:
@@ -380,7 +389,7 @@ class VMRayService(ServiceBase):
 
     def _create_process_tree(
         self,
-        analysis_section: ResultTextSection,
+        analysis_section: ResultSection,
         report: Dict,
     ) -> None:
         if "processes" not in report:
@@ -421,7 +430,7 @@ class VMRayService(ServiceBase):
 
     def _create_sandbox_info(
         self,
-        analysis_section: ResultTextSection,
+        analysis_section: ResultSection,
         analysis: Dict[str, Any],
         report: Dict,
         request: ServiceRequest,
