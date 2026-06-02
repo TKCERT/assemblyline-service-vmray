@@ -24,7 +24,7 @@ from assemblyline_v4_service.common.result import (
     ResultJSONSection,
     ResultSandboxSection,
 )
-from vmray.rest_api import VMRayRESTAPI, VMRayRESTAPIError
+from vmray.rest_api import VMRayRESTAPIError
 from vmray.integration_kit import VMRaySubmissionKit
 
 from vmray_result import VMRayResult
@@ -98,10 +98,10 @@ class VMRayService(ServiceBase):
                 submission_params["archive_password"] = submission_passwords[0]
                 submission_params["document_password"] = submission_passwords[0]
             if request.file_type.startswith("uri/"):
-                submission_results = submission_kit.submit_url(request.file_name, False, params=submission_params)
+                submission_results = self.submission_kit.submit_url(request.file_name, False, params=submission_params)
             else:
-                submission_filepath = Path(request.file_path)
-                submission_results = submission_kit.submit_file(submission_filepath, False, params=submission_params)
+                submission_path = Path(request.file_path)
+                submission_results = self.submission_kit.submit_file(submission_path, False, params=submission_params)
 
         self.log.info(f"Submission upload to VMRay completed, waiting for results")
 
@@ -114,7 +114,7 @@ class VMRayService(ServiceBase):
                     self.log.info(f"Submission #{submission_result.submission_id} finished with verdict '{submission_result.verdict}' ({len(submission_finished)}/{len(submission_results)})")
             if time.time() >= deadline:
                 self.log.warning("Timeout reached while waiting for VMRay submissions to finish")
-                jobs = submission_kit._api.call("GET", f"/rest/job?job_submission_id={submission_result.submission_id}")
+                jobs = self.vmray_api.call("GET", f"/rest/job?job_submission_id={submission_result.submission_id}")
                 jobs_status = {}
                 for job in jobs:
                     job_status = job["job_status"]
@@ -125,20 +125,18 @@ class VMRayService(ServiceBase):
 
         self.log.info(f"Retrieved {len(submission_results)} submission result(s) from VMRay, processing analyses")
 
-        api = submission_kit._api
         for submission_result in submission_results:
             sample_id = submission_result._sample_id
 
             self.log.info(f"Downloading PDF report for sample #{sample_id}")
             self._download_pdf_report_as_supplementary(
                 request=request,
-                api=api,
                 report_endpoint=f"/rest/sample/{sample_id}/report",
                 supplementary_filename=f"VMRay_Summary_{sample_id}.pdf",
                 supplementary_description=f"Sample #{sample_id}",
             )
 
-            analyses = submission_kit._api.get_analyses_by_submission_id(submission_result.submission_id)
+            analyses = self.vmray_api.get_analyses_by_submission_id(submission_result.submission_id)
             for analysis in analyses:
                 analysis_id = analysis["analysis_id"]
                 if "analysis_vm_description" in analysis:
@@ -152,7 +150,6 @@ class VMRayService(ServiceBase):
                     self.log.info(f"Downloading PDF report for analysis #{analysis_id}")
                     self._download_pdf_report_as_supplementary(
                         request=request,
-                        api=api,
                         report_endpoint=f"/rest/analysis/{analysis_id}/archive/report/report.pdf",
                         supplementary_filename=f"VMRay_Analysis_{analysis_id}.pdf",
                         supplementary_description=analysis_name,
@@ -187,12 +184,11 @@ class VMRayService(ServiceBase):
                 if analysis["analysis_analyzer_name"] in ("vmray", "vmray_web"):
                     self.log.info(f"Downloading screenshots for analysis #{analysis_id}")
                     image_section = ResultImageSection(request, "Screenshots")
-                    for screenshot_time, screenshot_name in self._iter_screenshots(api=api, analysis_id=analysis_id):
+                    for screenshot_time, screenshot_name in self._iter_screenshots(analysis_id=analysis_id):
                         try:
                             self._download_screenshot_into_image_section(
                                 request=request,
                                 image_section=image_section,
-                                api=api,
                                 analysis_id=analysis_id,
                                 screenshot_name=screenshot_name,
                                 screenshot_text=f"Screenshot at {screenshot_time}",
@@ -208,7 +204,7 @@ class VMRayService(ServiceBase):
 
                 try:
                     self.log.info(f"Retrieving summary report for analysis #{analysis_id}")
-                    report = json.load(submission_kit._api.get_report(analysis_id))
+                    report = json.load(self.vmray_api.get_report(analysis_id))
                 except Exception:
                     self._log_exception(analysis_section, f"Could not get summary report for analysis #{analysis_id}")
                     continue
@@ -246,7 +242,6 @@ class VMRayService(ServiceBase):
                         try:
                             self._download_extracted_file(
                                 request=request,
-                                api=api,
                                 analysis_id=analysis_id,
                                 archive_path=file_record["archive_path"],
                                 extracted_file_name="; ".join(filenames),
@@ -452,15 +447,13 @@ class VMRayService(ServiceBase):
 
     def _download(
         self,
-        api: VMRayRESTAPI,
         file_endpoint: str,
     ) -> Any:
-        return api.call("GET", file_endpoint, raw_data=True)
+        return self.vmray_api.call("GET", file_endpoint, raw_data=True)
 
     def _download_pdf_report_as_supplementary(
         self,
         request: ServiceRequest,
-        api: VMRayRESTAPI,
         report_endpoint: str,
         supplementary_filename: str,
         supplementary_description: str,
@@ -472,18 +465,16 @@ class VMRayService(ServiceBase):
             dir=self.working_directory,
             delete=False,
         ) as output_file:
-            shutil.copyfileobj(self._download(api, report_endpoint), output_file)
+            shutil.copyfileobj(self._download(report_endpoint), output_file)
             return request.add_supplementary(output_file.name, supplementary_filename, supplementary_description)
 
     def _download_archive_file(
         self,
-        api: VMRayRESTAPI,
         analysis_id: int,
         archive_path: str,
         hash_values: Dict[str, str] = {},
     ) -> str:
         archive_file = self._download(
-            api,
             file_endpoint=f"/rest/analysis/{analysis_id}/archive/{archive_path}",
         )
         with tempfile.NamedTemporaryFile(
@@ -505,7 +496,6 @@ class VMRayService(ServiceBase):
     def _download_extracted_file(
         self,
         request: ServiceRequest,
-        api: VMRayRESTAPI,
         analysis_id: int,
         archive_path: str,
         extracted_file_name: str,
@@ -513,7 +503,6 @@ class VMRayService(ServiceBase):
         hash_values: Dict[str, str] = {},
     ):
         output_filename = self._download_archive_file(
-            api,
             analysis_id,
             archive_path,
             hash_values=hash_values,
@@ -524,26 +513,22 @@ class VMRayService(ServiceBase):
         self,
         request: ServiceRequest,
         image_section: ResultImageSection,
-        api: VMRayRESTAPI,
         analysis_id: int,
         screenshot_name: str,
         screenshot_text: str,
     ):
         output_filename = self._download_archive_file(
-            api,
             analysis_id,
-            f"screenshots/{screenshot_name}"
+            archive_path=f"screenshots/{screenshot_name}",
         )
         return image_section.add_image(output_filename, screenshot_name, screenshot_text)
 
     def _iter_screenshots(
         self,
-        api: VMRayRESTAPI,
         analysis_id: int,
     ) -> Any:
         try:
             screenshot_index =self._download(
-                api,
                 file_endpoint=f"/rest/analysis/{analysis_id}/archive/screenshots/index.log",
             )
             screenshot_index.auto_close = False
