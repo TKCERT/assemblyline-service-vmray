@@ -155,11 +155,13 @@ class VMRayService(ServiceBase):
                         supplementary_description=analysis_name,
                     )
 
-                analysis_section = ResultURLSection(analysis_name)
+                analysis_section = ResultSection(analysis_name)
                 base_url = self.vmray_service_url or self.vmray_service_api_url
                 if base_url:
-                    analysis_section.add_url(f"{base_url}/analysis/{analysis_id}",
+                    analysis_url_section = ResultURLSection("Analysis URL")
+                    analysis_url_section.add_url(f"{base_url}/analysis/{analysis_id}",
                                              f"View analysis #{analysis_id} in VMRay")
+                    analysis_section.add_subsection(analysis_url_section)
                 request.result.add_section(analysis_section)
 
                 analysis_verdict = analysis.get("analysis_verdict", "unknown")
