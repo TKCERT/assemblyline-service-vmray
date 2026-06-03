@@ -51,7 +51,7 @@ class VMRayService(ServiceBase):
         super(VMRayService, self).__init__(config)
 
         self.vmray_service_url = self.config.get(self.VMRAY_SERVICE_URL_CONFIG_KEY)
-        self.vmray_service_api_url = self.config.get(self.VMRAY_SERVICE_API_URL_CONFIG_KEY, self.vmray_service_url)
+        self.vmray_service_api_url = self.config.get(self.VMRAY_SERVICE_API_URL_CONFIG_KEY) or self.vmray_service_url
         self.vmray_service_api_key = self.config.get(self.VMRAY_SERVICE_API_KEY_CONFIG_KEY)
         self.vmray_service_shareable = self.config.get(self.VMRAY_SERVICE_SHAREABLE_CONFIG_KEY, True)
         self.vmray_service_reanalyze = self.config.get(self.VMRAY_SERVICE_REANALYZE_CONFIG_KEY, True)
