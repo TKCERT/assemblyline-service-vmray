@@ -70,6 +70,7 @@ class VMRayService(ServiceBase):
 
         if self.vmray_service_api_url:
             self.vmray_service_api_url = self.vmray_service_api_url.rstrip("/")
+
         if not self.vmray_service_api_url:
             raise RuntimeError("VMRay service API URL not set in the config. Check the config section in the manifest?")
 
@@ -173,8 +174,6 @@ class VMRayService(ServiceBase):
                 analysis_section.add_section_part(analysis_url_part)
 
                 analysis_txt_part = TextSectionBody()
-                analysis_section.add_section_part(analysis_txt_part)
-
                 analysis_verdict = analysis.get("analysis_verdict", "unknown")
                 reason_code = analysis.get("analysis_verdict_reason_code", analysis.get("analysis_result_code"))
                 reason_text = analysis.get("analysis_verdict_reason_description", analysis.get("analysis_result_str"))
@@ -220,6 +219,7 @@ class VMRayService(ServiceBase):
                     report = json.load(self.vmray_api.get_report(analysis_id))
                 except Exception:
                     self._log_exception(analysis_txt_part, f"Could not get summary report for analysis #{analysis_id}")
+                    analysis_section.add_section_part(analysis_txt_part)
                     continue
 
                 try:
@@ -269,6 +269,7 @@ class VMRayService(ServiceBase):
                     report_json.set_json(report)
                     analysis_section.add_subsection(report_json)
 
+                analysis_section.add_section_part(analysis_txt_part)
                 for verdict_section in verdict_sections.values():
                     if verdict_section is not analysis_section and verdict_section.tags:
                         analysis_section.add_subsection(verdict_section)
