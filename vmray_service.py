@@ -17,12 +17,14 @@ from assemblyline_v4_service.common.result import (
     BODY_FORMAT,
     Heuristic,
     Result,
+    ResultMultiSection,
     ResultSection,
-    ResultURLSection,
     ResultImageSection,
     ResultTextSection,
     ResultJSONSection,
     ResultSandboxSection,
+    TextSectionBody,
+    URLSectionBody,
 )
 from vmray.rest_api import VMRayRESTAPIError
 from vmray.integration_kit import VMRaySubmissionKit
@@ -155,22 +157,27 @@ class VMRayService(ServiceBase):
                         supplementary_description=analysis_name,
                     )
 
-                analysis_section = ResultSection(analysis_name)
-                base_url = self.vmray_service_url or self.vmray_service_api_url
-                if base_url:
-                    analysis_url_section = ResultURLSection("Analysis URL")
-                    analysis_url_section.add_url(f"{base_url}/analysis/{analysis_id}",
-                                             f"View analysis #{analysis_id} in VMRay")
-                    analysis_section.add_subsection(analysis_url_section)
+                analysis_section = ResultMultiSection(analysis_name)
                 request.result.add_section(analysis_section)
+
+                base_url = (self.vmray_service_url or self.vmray_service_api_url).rstrip("/")
+                analysis_url_part = URLSectionBody()
+                analysis_url_part.add_url(
+                    f"{base_url}/analysis/{analysis_id}",
+                    f"View analysis #{analysis_id} in VMRay",
+                )
+                analysis_section.add_section_part(analysis_url_part)
+
+                analysis_txt_part = TextSectionBody()
+                analysis_section.add_section_part(analysis_txt_part)
 
                 analysis_verdict = analysis.get("analysis_verdict", "unknown")
                 reason_code = analysis.get("analysis_verdict_reason_code", analysis.get("analysis_result_code"))
                 reason_text = analysis.get("analysis_verdict_reason_description", analysis.get("analysis_result_str"))
                 if reason_code and reason_text:
-                    analysis_section.add_line(f"VERDICT: {analysis_verdict} ({reason_code}: {reason_text})")
+                    analysis_txt_part.add_line(f"VERDICT: {analysis_verdict} ({reason_code}: {reason_text})")
                 else:
-                    analysis_section.add_line(f"VERDICT: {analysis_verdict}")
+                    analysis_txt_part.add_line(f"VERDICT: {analysis_verdict}")
 
                 verdict_sections: Dict[VMRayVerdict, ResultSection] = {analysis_verdict: analysis_section}
                 for verdict in VMRayVerdict:
@@ -196,7 +203,7 @@ class VMRayService(ServiceBase):
                                 screenshot_text=f"Screenshot at {screenshot_time}",
                             )
                         except OSError:
-                            self._log_exception(analysis_section, f"Could not download screenshot '{screenshot_name}'")
+                            self._log_exception(analysis_txt_part, f"Could not download screenshot '{screenshot_name}'")
                     analysis_section.add_subsection(image_section)
 
                 if self.vmray_debug_add_json:
@@ -208,26 +215,26 @@ class VMRayService(ServiceBase):
                     self.log.info(f"Retrieving summary report for analysis #{analysis_id}")
                     report = json.load(self.vmray_api.get_report(analysis_id))
                 except Exception:
-                    self._log_exception(analysis_section, f"Could not get summary report for analysis #{analysis_id}")
+                    self._log_exception(analysis_txt_part, f"Could not get summary report for analysis #{analysis_id}")
                     continue
 
                 try:
                     self.log.info(f"Converting report to result for analysis #{analysis_id}")
-                    self._convert_report_to_result(request, analysis_section, verdict_sections, report)
+                    self._convert_report(request, analysis_section, analysis_txt_part, verdict_sections, report)
                 except Exception:
-                    self._log_exception(analysis_section, f"Could not convert report for analysis #{analysis_id}")
+                    self._log_exception(analysis_txt_part, f"Could not convert report for analysis #{analysis_id}")
 
                 try:
                     self.log.info(f"Creating process tree for analysis #{analysis_id}")
                     self._create_process_tree(analysis_section, report)
                 except Exception:
-                    self._log_exception(analysis_section, f"Could not create process tree for analysis #{analysis_id}")
+                    self._log_exception(analysis_txt_part, f"Could not create process tree for analysis #{analysis_id}")
 
                 try:
                     self.log.info(f"Creating sandbox info for analysis #{analysis_id}")
                     self._create_sandbox_info(analysis_section, analysis, report, request)
                 except Exception:
-                    self._log_exception(analysis_section, f"Could not create sandbox info for analysis #{analysis_id}")
+                    self._log_exception(analysis_txt_part, f"Could not create sandbox info for analysis #{analysis_id}")
 
                 if "extracted_files" in report and "files" in report and "filenames" in report:
                     self.log.info(f"Extracting files for analysis #{analysis_id}")
@@ -251,7 +258,7 @@ class VMRayService(ServiceBase):
                                 hash_values=file_record["hash_values"],
                             )
                         except Exception:
-                            self._log_exception(analysis_section, f"Could not download extracted file '{filename}'")
+                            self._log_exception(analysis_txt_part, f"Could not download extracted file '{filename}'")
 
                 if self.vmray_debug_add_json:
                     report_json = ResultJSONSection("Summary JSON", auto_collapse=True)
@@ -262,25 +269,26 @@ class VMRayService(ServiceBase):
                     if verdict_section is not analysis_section and verdict_section.tags:
                         analysis_section.add_subsection(verdict_section)
 
-    def _log_exception(self, section: ResultSection, message: str) -> None:
+    def _log_exception(self, text_section_or_body: ResultSection | TextSectionBody, message: str) -> None:
         self.log.exception(message)
-        section.add_line(f"EXCEPTION: {message}")
+        text_section_or_body.add_line(f"EXCEPTION: {message}")
 
-    def _convert_report_to_result(
+    def _convert_report(
         self,
         request: ServiceRequest,
         analysis_section: ResultSection,
+        analysis_txt_part: TextSectionBody,
         verdict_sections: Dict[VMRayVerdict, ResultSection],
         report: Dict,
     ) -> None:
         if "remarks" in report:
             remarks = report["remarks"]
             for error in remarks.get("errors", []):
-                analysis_section.add_line(f"ERROR: {error['message']}")
+                analysis_txt_part.add_line(f"ERROR: {error['message']}")
             for warning in remarks.get("warnings", []):
-                analysis_section.add_line(f"WARNING: {warning['message']}")
+                analysis_txt_part.add_line(f"WARNING: {warning['message']}")
             for info in remarks.get("infos", []):
-                analysis_section.add_line(f"INFO: {info['message']}")
+                analysis_txt_part.add_line(f"INFO: {info['message']}")
 
         if "mitre_attack" in report:
             mitre_attack = report["mitre_attack"]
@@ -390,7 +398,6 @@ class VMRayService(ServiceBase):
         report: Dict,
     ) -> None:
         if "processes" not in report:
-            analysis_section.add_line("INFO: No process information available in the report.")
             return
 
         def build_signatures(proc):
