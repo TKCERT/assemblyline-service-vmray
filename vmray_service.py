@@ -65,6 +65,11 @@ class VMRayService(ServiceBase):
         self.vmray_debug_sample_id = self.config.get(self.VMRAY_DEBUG_SAMPLE_ID_CONFIG_KEY, 0)
         self.verify = self.config.get("verify_certificate", True)
 
+        if self.vmray_service_url:
+            self.vmray_service_url = self.vmray_service_url.rstrip("/")
+
+        if self.vmray_service_api_url:
+            self.vmray_service_api_url = self.vmray_service_api_url.rstrip("/")
         if not self.vmray_service_api_url:
             raise RuntimeError("VMRay service API URL not set in the config. Check the config section in the manifest?")
 
@@ -160,10 +165,9 @@ class VMRayService(ServiceBase):
                 analysis_section = ResultMultiSection(analysis_name)
                 request.result.add_section(analysis_section)
 
-                base_url = (self.vmray_service_url or self.vmray_service_api_url).rstrip("/")
                 analysis_url_part = URLSectionBody()
                 analysis_url_part.add_url(
-                    f"{base_url}/analysis/{analysis_id}",
+                    f"{self.vmray_service_url or self.vmray_service_api_url}/analyses/{analysis_id}",
                     f"View analysis #{analysis_id} in VMRay",
                 )
                 analysis_section.add_section_part(analysis_url_part)
