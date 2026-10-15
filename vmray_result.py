@@ -125,16 +125,20 @@ class VMRayResult(object):
                     destination_port=connection.get("remote_port"),
                     transport_layer_protocol=protocol,
                     direction="outbound" if connection.get("is_client") else "inbound",
-                    process=None, # TODO: Add process information if available
+                    process=None,
                     sources=["VMRay"],
                     source_ip=self._follow_ref(connection.get("ref_local_ip_address")).get("ip_address"),
                     source_port=connection.get("local_port"),
-                    time_observed=None, # TODO: Add time observed information if available
+                    time_observed=None,
                     connection_type=None, # TODO: Add connection type information if available
                 )
+                process_refs = list(stream.get("ref_processes") or [])
                 for upper_protocol in stream.get("ref_upper_protocol_entries", []):
                     upper_stream = self._follow_ref(upper_protocol)
                     upper_type = upper_stream.get("_type")
+                    process_refs.extend(upper_stream.get("ref_processes") or [])
+                    if netflow_item.time_observed is None:
+                        netflow_item.time_observed = upper_stream.get("timestamp")
                     if upper_type == "network.dns.query":
                         resolved_ips = []
                         resolved_domains = []
@@ -167,6 +171,13 @@ class VMRayResult(object):
                             response_content_fileinfo=None, # TODO: Add response content file information
                             response_content_mimetype=None, # TODO: Add response content mimetype information
                         )
+                process_ids = set()
+                for ref in process_refs:
+                    process_id = self._follow_ref(ref).get("os_pid")
+                    if process_id is not None:
+                        process_ids.add(process_id)
+                if len(process_ids) == 1:
+                    netflow_item.process = process_ids.pop()
                 sandbox_section.add_network_connection(netflow_item)
 
     def add_vti_signatures(self, sandbox_section: ResultSandboxSection):
