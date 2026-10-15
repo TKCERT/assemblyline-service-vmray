@@ -32,6 +32,11 @@ class VMRayResult(object):
         self.report = report
         self.default_classification = default_classification
 
+    @staticmethod
+    def _description_with_details(description, *details):
+        lines = [line for line in (description, *details) if line]
+        return "\n".join(lines) or None
+
     def _follow_ref(
         self,
         ref: Dict[str, Any],
@@ -79,7 +84,11 @@ class VMRayResult(object):
             process_item = SandboxProcessItem(
                 image=process.get("filename"),
                 start_time=(start_time + timedelta(milliseconds=lowest_timedelta)).isoformat(),
-                sources=[process.get("monitor_reason")],
+                sources=[
+                    source
+                    for source in ("VMRay", process.get("monitor_reason"))
+                    if source
+                ],
                 ppid=self._follow_ref(process.get("ref_parent_process")).get("os_pid"),
                 pid=process.get("os_pid"),
                 command_line=process.get("cmd_line"),
@@ -105,7 +114,7 @@ class VMRayResult(object):
                     transport_layer_protocol=protocol,
                     direction="outbound" if connection.get("is_client") else "inbound",
                     process=None, # TODO: Add process information if available
-                    sources=[], # TODO: Add sources information if available
+                    sources=["VMRay"],
                     source_ip=self._follow_ref(connection.get("ref_local_ip_address")).get("ip_address"),
                     source_port=connection.get("local_port"),
                     time_observed=None, # TODO: Add time observed information if available
@@ -175,11 +184,16 @@ class VMRayResult(object):
                 name=vti_match.get("operation_desc"),
                 type="VTI", # pyright: ignore[reportArgumentType]
                 classification=self.default_classification,
-                sources=[vti_match.get("technique_type")],
+                sources=["VMRay"],
                 attacks=attacks,
                 actors=vti_match.get("classifications", None),
                 malware_families=vti_match.get("threat_names", None),
-                description=vti_match.get("technique_desc"),
+                description=self._description_with_details(
+                    vti_match.get("technique_desc"),
+                    f"Technique type: {vti_match['technique_type']}"
+                    if vti_match.get("technique_type")
+                    else None,
+                ),
                 pid=vti_pids.get(vti_match_key),
                 score=max(vti_match.get("analysis_score", 0), 0) * 250,
             )
@@ -192,11 +206,16 @@ class VMRayResult(object):
                 name=yara_match.get("rule_name"),
                 type="YARA", # pyright: ignore[reportArgumentType]
                 classification=self.default_classification,
-                sources=[yara_match.get("ruleset_name")],
+                sources=["VMRay"],
                 attacks=None, # TODO: Add attacks information if available
                 actors=yara_match.get("classifications", None),
                 malware_families=yara_match.get("threat_names", None),
-                description=yara_match.get("description"),
+                description=self._description_with_details(
+                    yara_match.get("description"),
+                    f"Ruleset: {yara_match['ruleset_name']}"
+                    if yara_match.get("ruleset_name")
+                    else None,
+                ),
                 pid=None, # TODO: Add pid information if available
                 score=max(yara_match.get("vti_rule_score", 0), 0) * 250,
             )
@@ -205,6 +224,9 @@ class VMRayResult(object):
     def add_av_signatures(self, sandbox_section: ResultSandboxSection):
         anti_virus = self.report.get("anti_virus", {}).values()
         for av_engine in anti_virus:
+            engine = av_engine.get("engine", {})
+            engine_name = engine.get("engine_name")
+            engine_version = engine.get("engine_version")
             av_matches = av_engine.get("matches", {}).values()
             for av_match in av_matches:
                 av_verdict = av_match.get("verdict").lower()
@@ -220,11 +242,14 @@ class VMRayResult(object):
                     name=av_match.get("threat", {}).get("classification"),
                     type="AV", # pyright: ignore[reportArgumentType]
                     classification=self.default_classification,
-                    sources=[av_engine.get("engine", {}).get("engine_version")],
+                    sources=["VMRay", engine_name] if engine_name else ["VMRay"],
                     attacks=None, # TODO: Add attacks information if available
                     actors=None, # TODO: Add actors information if available
                     malware_families=[av_match.get("threat", {}).get("name", "n/a")],
-                    description=av_match.get("verdict_reason_description"),
+                    description=self._description_with_details(
+                        av_match.get("verdict_reason_description"),
+                        f"Engine version: {engine_version}" if engine_version else None,
+                    ),
                     pid=None, # TODO: Add pid information if available
                     score=av_score,
                 )
