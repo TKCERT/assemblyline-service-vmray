@@ -131,7 +131,8 @@ class VMRayResult(object):
                             resolved_domains=resolved_domains,
                         )
                     elif upper_type == "network.http.request":
-                        response = upper_stream.get("responses", []).popdefault({})
+                        responses = upper_stream.get("responses") or []
+                        response = responses[0] if responses else {}
                         request_headers = {h.get("name"): h.get("value") for h in upper_stream.get("headers", [])}
                         response_headers = {h.get("name"): h.get("value") for h in response.get("headers", [])}
                         netflow_item.http_details = SandboxNetworkHTTP(
