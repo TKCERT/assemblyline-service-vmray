@@ -33,6 +33,13 @@ class VMRayResult(object):
         self.default_classification = default_classification
 
     @staticmethod
+    def _integrity_level(value):
+        try:
+            return VMRayIntegrityLevel(value).name
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
     def _description_with_details(description, *details):
         lines = [line for line in (description, *details) if line]
         return "\n".join(lines) or None
@@ -80,7 +87,12 @@ class VMRayResult(object):
         start_time = parser.isoparse(analysis_metadata.get("creation_time"))
         processes = self.report.get("processes", {})
         for process in processes.values():
-            lowest_timedelta = min(map(lambda region: region.get("timedelta"), process.get("regions", {}).values()))
+            region_times = [
+                region.get("timedelta")
+                for region in (process.get("regions") or {}).values()
+                if isinstance(region.get("timedelta"), (int, float))
+            ]
+            lowest_timedelta = min(region_times, default=0)
             process_item = SandboxProcessItem(
                 image=process.get("filename"),
                 start_time=(start_time + timedelta(milliseconds=lowest_timedelta)).isoformat(),
@@ -93,7 +105,7 @@ class VMRayResult(object):
                 pid=process.get("os_pid"),
                 command_line=process.get("cmd_line"),
                 end_time=None, # TODO: Add end time if available
-                integrity_level=VMRayIntegrityLevel(process.get("integrity_level")).name,
+                integrity_level=self._integrity_level(process.get("integrity_level")),
                 image_hash=self._follow_ref(process.get("ref_cmd_line_file")).get("hash_values", {}).get("sha256"),
                 original_file_name=process.get("image_name"),
                 safelisted=None, # TODO: Add safelisted information if available
